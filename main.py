@@ -1,11 +1,13 @@
+import random
+
 import pygame
 
 from PIL import Image
-from random import choices, choice, randint
+from random import choices, choice, randint, uniform
 
-STRUCTURES_RANGE = [20, 50]  # from: _ to: _
-EXTENDED_RANGE = [1, 5]  # from: _ to: _
-ENEMIES_MULTI_RANGE = [int(numb * 10) for numb in [0.2, 0.8]]  # from: _ to: _
+STRUCTURES_RANGE = [500, 1000]  # from: _ to: _
+EXTENDED_RANGE = [-5, 5]  # from: _ to: _
+ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
 
@@ -18,8 +20,11 @@ class Character:
 
 
 class Player(Character):
-    def __init__(self, hp, pos, damage):
-        super().__init__(hp, pos, damage)
+    def __init__(self, max_hp, pos, damage):
+        super().__init__(max_hp, pos, damage)
+        self.max_hp = max_hp
+        self.hp = max_hp
+        self.floor = 1
 
     def pressed_key(self, event):
         if event[pygame.K_w] or event[pygame.K_s] or event[pygame.K_a] or event[pygame.K_d]:
@@ -32,6 +37,7 @@ class Player(Character):
             running = False
         elif event[pygame.K_e] and self.pos == exit_ladder:
             make_new_level()
+            self.floor += 1
 
     def move(self, event):
         for args in [[[0, -1], pygame.K_w], [[0, 1], pygame.K_s],
@@ -62,8 +68,9 @@ class Player(Character):
 
 
 class BasicEnemy(Character):
-    def __init__(self, hp, damage, pos, found_radius, view):
+    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step):
         super().__init__(hp, pos, damage)
+        self.moves_per_step = moves_per_step
         self.cells_of_view = sphere_of_cells(view)
         self.found_radius = found_radius
 
@@ -74,22 +81,22 @@ class BasicEnemy(Character):
                 if (self.pos[0] + cell[0], self.pos[1] + cell[1]) in card:
                     lb[(self.pos[0] + cell[0], self.pos[1] + cell[1])] = 0
             result = self.find_path(lb, self.pos, player.pos)
-            if result and [cell for cell in result if cell != player.pos]:
-                self.pos = [cell for cell in result if cell != player.pos][0]
-            elif result is None:
+            if result and (path := [cell for cell in result if cell != player.pos]):  # <-- path
+                self.pos = path[:self.moves_per_step][-1]
+            elif result is None:  # если нельзя пройти до игрока
                 self.make_random_step()
-            else:
+            if result and len(path) < self.moves_per_step:  # если остались ходы
                 player.hp -= self.damage
-                print(player.hp)
         else:
             self.make_random_step()
 
     def make_random_step(self):
-        variants = []
-        for args in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
-            if check_condition([1, 1], pos=(self.pos[0] + args[0], self.pos[1] + args[1])):
-                variants.append((self.pos[0] + args[0], self.pos[1] + args[1]))
-        self.pos = choice(variants)
+        for _ in range(self.moves_per_step):
+            variants = []
+            for args in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
+                if check_condition([1, 1], pos=(self.pos[0] + args[0], self.pos[1] + args[1])):
+                    variants.append((self.pos[0] + args[0], self.pos[1] + args[1]))
+            self.pos = choice(variants)
 
     def find_path(self, lab, start, end):
         copy_lab = lab.copy()
@@ -117,6 +124,11 @@ class BasicEnemy(Character):
             self.find_lab_tuples(new_nexts, lb)
 
 
+class FastEnemy(BasicEnemy):
+    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step):
+        super().__init__(hp, damage, pos, found_radius, view, moves_per_step)
+
+
 def check_condition(variants, pos=None, flat=None, event=None, key=None):
     if flat is None:
         flat = card
@@ -141,7 +153,7 @@ def load_new_place(filename):
     find_first = pixels[0, 0] != (0, 0, 0, 255)
     for i in range(x):
         for j in range(y):
-            if pixels[i, j] == (0, 0, 0, 255):
+            if pixels[i, j] == (0, 0, 0, 255) or pixels[i, j] == (0, 0, 0):
                 if find_first:
                     find_first = False
                     firsts = [i, j]
@@ -169,16 +181,15 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, stopped
+    global card, exit_ladder, enemies, focused, stopped, chest, width_loading, height_loading
 
     stopped = True
     structures = randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1])
-    extended = randint(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
+    extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
     card = start.copy()
-
     for i in range(structures):
+        draw_loading_bar(i / structures)
         global percent
-
         percent = i / structures * 100, 2
         cells = []
         for cell in card:
@@ -205,50 +216,75 @@ def make_new_level():
 
     enemies = []
     flat = card.copy()
+    flat2 = flat.copy()
     [flat.pop(cell) for cell in sphere_of_cells(20) if cell in flat]
     numb_enemies = len(flat) if \
         len(flat) < (numb_enemies :=
-                     int(structures * randint(ENEMIES_MULTI_RANGE[0],
-                                              ENEMIES_MULTI_RANGE[1]) / 10)) else numb_enemies
+                     int(structures * uniform(ENEMIES_MULTI_RANGE[0],
+                                              ENEMIES_MULTI_RANGE[1]))) else numb_enemies
     for i in range(numb_enemies):
         cell = choice(list(flat))
-        enemies.append(BasicEnemy(30, 10, cell, 5, 10))
+        enemies.append(choices([BasicEnemy(30, 1, cell, 5, 10, 1), FastEnemy(20, 1, cell, 7, 15, 3)], weights=[10, player.floor])[0])
         flat.pop(cell)
+
+    flat2.pop((0, 0))
+    flat2.pop(exit_ladder)
+    chest = choices(list(flat2), weights=[pow(abs(cell[0] - exit_ladder[0]) +
+                                              abs(cell[1] - exit_ladder[1]) + abs(cell[0]) +
+                                              abs(cell[1]), 1.5) for cell in flat2])[0]
 
     focused = True
     stopped = False
     player.pos = (0, 0)
 
 
-player = Player(100, (0, 0), 10)
-places = [load_new_place(f"paint{i}.png") for i in range(1, 5)]
-make_new_level()
+def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):  # lb - loading bar
+    screen.fill((0, 0, 0))
+    pygame.draw.rect(screen, (255, 255, 255), (
+    (width - width_lb) // 2, (height - height_lb) // 2, width_lb, height_lb), 1)
+    pygame.draw.rect(screen, (255, 255, 255), (
+    (width - width_lb) // 2, (height - height_lb) // 2, percent * width_lb, height_lb))
+    text = pygame.font.Font(None, 50).render(f"{round(percent * 100, 1)}%", True, (255, 255, 255))
+    screen.blit(text, ((width - text.get_width()) // 2, (height - height_lb) // 2 +
+                       height_lb + text_under_lb))
+    pygame.display.flip()
+
+
+
+pygame.init()
+size = width, height = 1000, 1000
+screen = pygame.display.set_mode(size)
+player = Player(10, (0, 0), 10)
+places = [load_new_place(f"paint{i}.png") for i in range(1, 6)]  # структуры можно также хранить в
+
 
 if __name__ == '__main__':
-    pygame.init()
     MYEVENTTYPE = pygame.USEREVENT + 1
     timer_speed = 10
     pygame.time.set_timer(MYEVENTTYPE, timer_speed)
-    size = width, height = 1000, 1000
-    screen = pygame.display.set_mode(size)
     running = True
     stopped = False
     drag = False
+    first = True
     drag_offset = [0, 0]
     size = 20
 
     can_go_next = True
-    time_rest = 250  # промежуток между ходами в миллисекундах
+    time_rest = 100  # промежуток между ходами в миллисекундах
     time_for_next = 0
 
     while running:
         screen.fill('black')
+        if first:
+            first = False
+            make_new_level()
         for event in pygame.event.get():
             if stopped:
                 continue
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.MOUSEWHEEL and (size != 1 or event.y != -1) and (size != 100 or event.y != 1):
+            elif event.type == pygame.MOUSEWHEEL and (size != 1 or event.y != -1) and \
+                    (size != 100 or event.y != 1):
                 size += event.y
                 drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
                                round(drag_offset[1] * (size / (size - event.y)))]
@@ -287,10 +323,13 @@ if __name__ == '__main__':
                          (128, 64, 48), (width // 2 + exit_ladder[0] * size + 1 - offset[0] - size // 2,
                                          height // 2 + exit_ladder[1] * size + 1 - offset[1] - size // 2,
                                          size - 2, size - 2))
+        pygame.draw.rect(screen, (255, 0, 255), (width // 2 + chest[0] * size + 1 - offset[0] - size // 2,
+                                         height // 2 + chest[1] * size + 1 - offset[1] - size // 2,
+                                         size - 2, size - 2))
 
         for en in enemies:
             pygame.draw.circle(
-                screen, (0, 0, 255),
+                screen, {"BasicEnemy": (0, 0, 255), "FastEnemy": (255, 255, 0)}[en.__class__.__name__],
                 (width // 2 + size // 2 - offset[0] + en.pos[0] * size - size // 2,
                  height // 2 + size // 2 - offset[1] + en.pos[1] * size - size // 2),
                 size // 2)
@@ -309,6 +348,16 @@ if __name__ == '__main__':
         pygame.draw.arc(screen, (255, 150, 0), (50, height - 100, 50, 50), 90 / 57.2958,
                         360 / 57.2958 * (time_for_next / time_rest) +
                         90 / 57.2958, 5)  # время до следующего хода
+
+        hp_bar_height = 200
+        hp_bar_line_width = 2
+        pygame.draw.rect(screen, (100, 100, 100), (10, 10, 30, hp_bar_height))
+        for i in range(player.max_hp):
+            pygame.draw.rect(
+                screen, (255, 0, 0) if i < player.hp else (10, 10, 10),
+                (12, 12 + i * ((hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) /
+                               player.max_hp + hp_bar_line_width), 26,
+                 (hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) / player.max_hp))
 
         pygame.display.flip()
     pygame.quit()
