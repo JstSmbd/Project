@@ -5,7 +5,7 @@ import pygame
 from PIL import Image
 from random import choices, choice, randint, uniform
 
-STRUCTURES_RANGE = [100, 200]  # from: _ to: _
+STRUCTURES_RANGE = [20, 50]  # from: _ to: _
 EXTENDED_RANGE = [-5, 5]  # from: _ to: _
 ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
@@ -25,6 +25,7 @@ class Player(Character):
         self.max_hp = max_hp
         self.hp = max_hp
         self.floor = 1
+        self.kills = 0
 
     def pressed_key(self, event):
         if event[pygame.K_w] or event[pygame.K_s] or event[pygame.K_a] or event[pygame.K_d]:
@@ -33,8 +34,10 @@ class Player(Character):
             pygame.K_RIGHT]:
             self.attack(event)
         if self.hp <= 0:
-            global running
-            running = False
+            global state, focused, drag_offset, size
+            state = "end window"
+            focused = False
+            drag_offset = [self.pos[0] * size, self.pos[1] * size]
         elif event[pygame.K_e] and self.pos == exit_ladder:
             make_new_level()
             self.floor += 1
@@ -60,7 +63,9 @@ class Player(Character):
                 for en in enemies:
                     if en.pos == (self.pos[0] + args[0][0], self.pos[1] + args[0][1]):
                         en.hp -= self.damage
-                [enemies.remove(en) for en in [en for en in enemies if en.hp <= 0]]
+                for en in [en for en in enemies if en.hp <= 0]:
+                    enemies.remove(en)
+                    self.kills += 1
                 [en.make_step() for en in enemies]
                 global can_go_next
                 can_go_next = False
@@ -187,7 +192,9 @@ def make_new_level():
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
     card = start.copy()
     for i in range(structures):
-        main_cycle("loading_bar", percent=i / structures)
+        draw_loading_bar(i / structures)
+        global percent
+        percent = i / structures * 100, 2
         cells = []
         for cell in card:
             if (cell[0] + 1, cell[1]) not in card:
@@ -199,7 +206,9 @@ def make_new_level():
             if (cell[0], cell[1] - 1) not in card:
                 cells.append((cell[0], cell[1] - 1))
 
-        first = choices(cells, weights=[pow((abs(cell[0]) + abs(cell[1])), extended) for cell in cells])[0]
+        first = \
+            choices(cells, weights=[pow((abs(cell[0]) + abs(cell[1])), extended) for cell in cells])[
+                0]
         for coord in rotate(choice(places), randint(0, 3)):
             card[first[0] + coord[0], first[1] + coord[1]] = 1
 
@@ -221,7 +230,8 @@ def make_new_level():
                                               ENEMIES_MULTI_RANGE[1]))) else numb_enemies
     for i in range(numb_enemies):
         cell = choice(list(flat))
-        enemies.append(choices([BasicEnemy(30, 1, cell, 5, 10, 1), FastEnemy(20, 1, cell, 7, 15, 3)], weights=[10, player.floor])[0])
+        enemies.append(choices([BasicEnemy(30, 1, cell, 5, 10, 1), FastEnemy(20, 1, cell, 7, 15, 3)],
+                               weights=[10, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -234,22 +244,226 @@ def make_new_level():
     player.pos = (0, 0)
 
 
-def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):  # lb - loading bar
-    screen.fill((0, 0, 0))
+def draw_main_game():
+    global first, size, drag_offset, drag, focused, can_go_next, time_for_next, card
+    screen.fill('black')
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            end()
+        elif event.type == pygame.MOUSEWHEEL and (size != 1 or event.y != -1) and \
+                (size != 100 or event.y != 1):
+            size += event.y
+            drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
+                           round(drag_offset[1] * (size / (size - event.y)))]
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            drag = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            drag = False
+        elif event.type == pygame.MOUSEMOTION and drag:
+            drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
+            focused = False
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_f:
+                focused = not focused
+                drag_offset = [player.pos[0] * size, player.pos[1] * size]
+        elif event.type == MYEVENTTYPE:
+            if not can_go_next:
+                time_for_next += timer_speed
+            if time_for_next >= time_rest:
+                can_go_next = True
+                time_for_next = 0
+        if pygame.key.get_pressed() and can_go_next:
+            player.pressed_key(pygame.key.get_pressed())
+
+    offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
+    for cell in card:  # поле
+        pygame.draw.rect(screen,
+                         (200, 200, 200), (width // 2 + cell[0] * size - offset[0] - size // 2,
+                                           height // 2 + cell[1] * size - offset[1] - size // 2,
+                                           size, size), 1)
+        pygame.draw.rect(screen,
+                         (150, 150, 150),
+                         (width // 2 + cell[0] * size + 1 - offset[0] - size // 2,
+                          height // 2 + cell[1] * size + 1 - offset[1] - size // 2,
+                          size - 2, size - 2))
+
+    pygame.draw.rect(screen,
+                     (128, 64, 48),
+                     (width // 2 + exit_ladder[0] * size + 1 - offset[0] - size // 2,
+                      height // 2 + exit_ladder[1] * size + 1 - offset[1] - size // 2,
+                      size - 2, size - 2))
+    pygame.draw.rect(screen, (255, 0, 255),
+                     (width // 2 + chest[0] * size + 1 - offset[0] - size // 2,
+                      height // 2 + chest[1] * size + 1 - offset[1] - size // 2,
+                      size - 2, size - 2))
+
+    for en in enemies:
+        pygame.draw.circle(
+            screen,
+            {"BasicEnemy": (0, 0, 255), "FastEnemy": (255, 255, 0)}[en.__class__.__name__],
+            (width // 2 + size // 2 - offset[0] + en.pos[0] * size - size // 2,
+             height // 2 + size // 2 - offset[1] + en.pos[1] * size - size // 2),
+            size // 2)
+
+    if focused:
+        pygame.draw.circle(screen, (255, 0, 0), (width // 2, height // 2),
+                           size // 2)  # игрок
+    else:
+        pygame.draw.circle(screen, (255, 0, 0),
+                           (width // 2 - drag_offset[0] + player.pos[0] * size,
+                            height // 2 - drag_offset[1] + player.pos[1] * size),
+                           size // 2)  # игрок
+    pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
+                    360 / 57.2958 * (time_for_next / time_rest) +
+                    90 / 57.2958, 25)
+    pygame.draw.arc(screen, (255, 150, 0), (50, height - 100, 50, 50), 90 / 57.2958,
+                    360 / 57.2958 * (time_for_next / time_rest) +
+                    90 / 57.2958, 5)  # время до следующего хода
+
+    hp_bar_height = 200
+    hp_bar_line_width = 2
+    pygame.draw.rect(screen, (100, 100, 100), (10, 10, 30, hp_bar_height))
+    for i in range(player.max_hp):
+        pygame.draw.rect(
+            screen, (255, 0, 0) if i < player.hp else (10, 10, 10),
+            (12, 12 + i * ((hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) /
+                           player.max_hp + hp_bar_line_width), 26,
+             (hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) / player.max_hp))
+    pygame.display.flip()
+
+
+def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
+    screen.fill("black")
     pygame.draw.rect(screen, (255, 255, 255), (
-    (width - width_lb) // 2, (height - height_lb) // 2, width_lb, height_lb), 1)
+        (width - width_lb) // 2, (height - height_lb) // 2, width_lb, height_lb), 1)
     pygame.draw.rect(screen, (255, 255, 255), (
-    (width - width_lb) // 2, (height - height_lb) // 2, percent * width_lb, height_lb))
+        (width - width_lb) // 2, (height - height_lb) // 2, percent * width_lb,
+        height_lb))
     text = pygame.font.Font(None, 50).render(f"{round(percent * 100, 1)}%", True, (255, 255, 255))
     screen.blit(text, ((width - text.get_width()) // 2, (height - height_lb) // 2 +
                        height_lb + text_under_lb))
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            end()
+    pygame.display.flip()
+
+
+def draw_start_window(start_window_borders=[100, 450, 900, 550]):
+    global state
+    screen.fill("black")
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            end()
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                and start_window_borders[0] <= event.pos[0] <= start_window_borders[2] \
+                and start_window_borders[1] <= event.pos[1] <= start_window_borders[3]:
+            state = "main"
+            make_new_level()
+    pygame.draw.rect(screen, (0, 255, 0), (start_window_borders[0], start_window_borders[1],
+                                           start_window_borders[2] - start_window_borders[0],
+                                           start_window_borders[3] - start_window_borders[1]), 1)
+    text = pygame.font.Font(None, 100).render("START", True, (0, 255, 0))
+    screen.blit(text, ((width - text.get_width()) // 2, (height - text.get_height()) // 2))
+    pygame.display.flip()
+
+
+def draw_end_window(end_window_borders=[780, 20, 200, 400],
+                    exit_button_sizes=[200, 50], text_under_end_window=20):
+    global size, drag_offset, drag, focused
+    screen.fill("black")
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            end()
+        elif event.type == pygame.MOUSEWHEEL and (size != 1 or event.y != -1) and \
+                (size != 100 or event.y != 1):
+            size += event.y
+            drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
+                           round(drag_offset[1] * (size / (size - event.y)))]
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if end_window_borders[0] + end_window_borders[2] // 2 - exit_button_sizes[0] // 2 <= \
+                    event.pos[0] <= end_window_borders[0] + end_window_borders[2] // 2 - \
+                    exit_button_sizes[0] // 2 + exit_button_sizes[0] and end_window_borders[1] + \
+                    end_window_borders[3] + text_under_end_window <= event.pos[1] <= \
+                    end_window_borders[1] + end_window_borders[3] + \
+                    text_under_end_window + exit_button_sizes[1]:
+                end()
+            drag = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            drag = False
+        elif event.type == pygame.MOUSEMOTION and drag:
+            drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
+            focused = False
+
+    offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
+    for cell in card:  # поле
+        pygame.draw.rect(screen,
+                         (200, 200, 200), (width // 2 + cell[0] * size - offset[0] - size // 2,
+                                           height // 2 + cell[1] * size - offset[1] - size // 2,
+                                           size, size), 1)
+        pygame.draw.rect(screen,
+                         (150, 150, 150),
+                         (width // 2 + cell[0] * size + 1 - offset[0] - size // 2,
+                          height // 2 + cell[1] * size + 1 - offset[1] - size // 2,
+                          size - 2, size - 2))
+
+    pygame.draw.rect(screen,
+                     (128, 64, 48),
+                     (width // 2 + exit_ladder[0] * size + 1 - offset[0] - size // 2,
+                      height // 2 + exit_ladder[1] * size + 1 - offset[1] - size // 2,
+                      size - 2, size - 2))
+    pygame.draw.rect(screen, (255, 0, 255),
+                     (width // 2 + chest[0] * size + 1 - offset[0] - size // 2,
+                      height // 2 + chest[1] * size + 1 - offset[1] - size // 2,
+                      size - 2, size - 2))
+
+    for en in enemies:
+        pygame.draw.circle(
+            screen,
+            {"BasicEnemy": (0, 0, 255), "FastEnemy": (255, 255, 0)}[en.__class__.__name__],
+            (width // 2 + size // 2 - offset[0] + en.pos[0] * size - size // 2,
+             height // 2 + size // 2 - offset[1] + en.pos[1] * size - size // 2),
+            size // 2)
+    pygame.draw.rect(screen, (255, 255, 255), (end_window_borders[0], end_window_borders[1],
+                                               end_window_borders[2], end_window_borders[3]), 1)
+    pygame.draw.rect(screen, (0, 0, 0), (end_window_borders[0] + 1, end_window_borders[1] + 1,
+                                         end_window_borders[2] - 2, end_window_borders[3] - 2))
+    text = pygame.font.Font(None, 30).render(f"floor - {player.floor}", True, (255, 255, 255))
+    screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 10))
+    text = pygame.font.Font(None, 30).render(f"kills - {player.kills}", True, (255, 255, 255))
+    screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 30))
+
+    pygame.draw.rect(screen, (255, 255, 255), (end_window_borders[0] +
+                                               end_window_borders[2] // 2 -
+                                               exit_button_sizes[0] // 2,
+                                               end_window_borders[1] +
+                                               end_window_borders[3] + text_under_end_window,
+                                               exit_button_sizes[0], exit_button_sizes[1]), 1)
+    pygame.draw.rect(screen, (0, 0, 0), (end_window_borders[0] +
+                                         end_window_borders[2] // 2 -
+                                         exit_button_sizes[0] // 2 + 1,
+                                         end_window_borders[1] +
+                                         end_window_borders[3] + text_under_end_window + 1,
+                                         exit_button_sizes[0] - 2, exit_button_sizes[1] - 2))
+    text = pygame.font.Font(None, 50).render("EXIT", True, (255, 255, 255))
+    screen.blit(text, (end_window_borders[0] +
+                       end_window_borders[2] // 2 -
+                       exit_button_sizes[0] // 2 + (exit_button_sizes[0] - text.get_width()) // 2,
+                       end_window_borders[1] +
+                       end_window_borders[3] + text_under_end_window + (
+                                   exit_button_sizes[1] - text.get_height()) // 2,
+                       exit_button_sizes[0], exit_button_sizes[1]))
+    pygame.display.flip()
+
+
+def end():
+    pygame.quit()
+    exit()
 
 
 pygame.init()
 MYEVENTTYPE = pygame.USEREVENT + 1
 timer_speed = 10
 pygame.time.set_timer(MYEVENTTYPE, timer_speed)
-running = True
 drag = False
 first = True
 focused = True
@@ -258,112 +472,20 @@ time_rest = 100  # промежуток между ходами в миллис�
 time_for_next = 0
 drag_offset = [0, 0]
 size = 20
-
-
-def main_cycle(description, **kwargs):
-    global running, first, size, drag_offset, drag, focused, can_go_next, time_for_next
-    if running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            if description == "main":
-                screen.fill('black')
-                if first:
-                    first = False
-                    make_new_level()
-                if event.type == pygame.MOUSEWHEEL and (size != 1 or event.y != -1) and \
-                        (size != 100 or event.y != 1):
-                    size += event.y
-                    drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
-                                   round(drag_offset[1] * (size / (size - event.y)))]
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    drag = True
-                elif event.type == pygame.MOUSEBUTTONUP:
-                    drag = False
-                elif event.type == pygame.MOUSEMOTION and drag:
-                    drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
-                    focused = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_f:
-                        focused = not focused
-                        drag_offset = [player.pos[0] * size, player.pos[1] * size]
-                elif event.type == MYEVENTTYPE:
-                    if not can_go_next:
-                        time_for_next += timer_speed
-                    if time_for_next >= time_rest:
-                        can_go_next = True
-                        time_for_next = 0
-                if pygame.key.get_pressed() and can_go_next:
-                    player.pressed_key(pygame.key.get_pressed())
-                offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
-                for cell in card:  # поле
-                    pygame.draw.rect(screen,
-                                     (200, 200, 200), (width // 2 + cell[0] * size - offset[0] - size // 2,
-                                                       height // 2 + cell[1] * size - offset[1] - size // 2,
-                                                       size, size), 1)
-                    pygame.draw.rect(screen,
-                                     (150, 150, 150),
-                                     (width // 2 + cell[0] * size + 1 - offset[0] - size // 2,
-                                      height // 2 + cell[1] * size + 1 - offset[1] - size // 2,
-                                      size - 2, size - 2))
-
-                pygame.draw.rect(screen,
-                                 (128, 64, 48),
-                                 (width // 2 + exit_ladder[0] * size + 1 - offset[0] - size // 2,
-                                  height // 2 + exit_ladder[1] * size + 1 - offset[1] - size // 2,
-                                  size - 2, size - 2))
-                pygame.draw.rect(screen, (255, 0, 255),
-                                 (width // 2 + chest[0] * size + 1 - offset[0] - size // 2,
-                                  height // 2 + chest[1] * size + 1 - offset[1] - size // 2,
-                                  size - 2, size - 2))
-
-                for en in enemies:
-                    pygame.draw.circle(
-                        screen,
-                        {"BasicEnemy": (0, 0, 255), "FastEnemy": (255, 255, 0)}[en.__class__.__name__],
-                        (width // 2 + size // 2 - offset[0] + en.pos[0] * size - size // 2,
-                         height // 2 + size // 2 - offset[1] + en.pos[1] * size - size // 2),
-                        size // 2)
-
-                if focused:
-                    pygame.draw.circle(screen, (255, 0, 0), (width // 2, height // 2),
-                                       size // 2)  # игрок
-                else:
-                    pygame.draw.circle(screen, (255, 0, 0),
-                                       (width // 2 - drag_offset[0] + player.pos[0] * size,
-                                        height // 2 - drag_offset[1] + player.pos[1] * size),
-                                       size // 2)  # игрок
-                pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
-                                360 / 57.2958 * (time_for_next / time_rest) +
-                                90 / 57.2958, 25)
-                pygame.draw.arc(screen, (255, 150, 0), (50, height - 100, 50, 50), 90 / 57.2958,
-                                360 / 57.2958 * (time_for_next / time_rest) +
-                                90 / 57.2958, 5)  # время до следующего хода
-
-                hp_bar_height = 200
-                hp_bar_line_width = 2
-                pygame.draw.rect(screen, (100, 100, 100), (10, 10, 30, hp_bar_height))
-                for i in range(player.max_hp):
-                    pygame.draw.rect(
-                        screen, (255, 0, 0) if i < player.hp else (10, 10, 10),
-                        (12, 12 + i * ((hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) /
-                                       player.max_hp + hp_bar_line_width), 26,
-                         (hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) / player.max_hp))
-
-            elif description == "loading_bar":
-                draw_loading_bar(kwargs["percent"])
-    else:
-        pygame.quit()
-        exit()
-    pygame.display.flip()
-
-
 sized = width, height = 1000, 1000
 screen = pygame.display.set_mode(sized)
 player = Player(10, (0, 0), 10)
 places = [load_new_place(f"paint{i}.png") for i in range(1, 6)]  # структуры можно также хранить в
+# БД или csv/текстовом файле
 
 
 if __name__ == '__main__':
+    state = "start window"
     while True:
-        main_cycle("main")
+        if state == "main":
+            draw_main_game()
+        elif state == "start window":
+            draw_start_window()
+        elif state == "end window":
+            draw_end_window()
+
