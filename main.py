@@ -5,7 +5,7 @@ import pygame
 from PIL import Image
 from random import choices, choice, randint, uniform
 
-STRUCTURES_RANGE = [50, 100]  # from: _ to: _
+STRUCTURES_RANGE = [20, 50]  # from: _ to: _
 EXTENDED_RANGE = [-5, 5]  # from: _ to: _
 ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
 FOCUSE_RANGE = [5, 30]
@@ -28,18 +28,33 @@ class Floor(pygame.sprite.Sprite):
         self.rect.y = height // 2 + self.cell[1] * size - offset[1] - size // 2
 
 
-class Character:
-    def __init__(self, hp, pos, damage):
+class Character(pygame.sprite.Sprite):
+    def __init__(self, hp, pos, damage, image):
+        super().__init__()
+        self.image_orig = load_image(image, 1)
+        self.image = self.image_orig
+        self.rect = self.image.get_rect()
+        self.rect.x = 0
+        self.rect.y = 0
         self.hp = hp
         self.pos = pos
         self.damage = damage
 
+    def update(self, offset=None, size_changed=None):
+        global height, width, size
+        if size_changed:
+            self.image = pygame.transform.scale(self.image_orig, (size, size))
+            self.image.set_colorkey(self.image.get_at((0, 0)))
+        else:
+            self.rect.x, self.rect.y = (
+                width // 2 - size // 2 - offset[0] + self.pos[0] * size,
+                height // 2 - size // 2 - offset[1] + self.pos[1] * size)
+
 
 class Player(Character):
-    def __init__(self, max_hp, pos, damage):
-        super().__init__(max_hp, pos, damage)
+    def __init__(self, max_hp, pos, damage, image):
+        super().__init__(max_hp, pos, damage, image)
         self.max_hp = max_hp
-        self.hp = max_hp
         self.floor = 1
         self.kills = 0
 
@@ -56,18 +71,22 @@ class Player(Character):
             drag_offset = [self.pos[0] * size, self.pos[1] * size]
 
     def move(self, event):
+        global enemies
         for args in [[[0, -1], pygame.K_w], [[0, 1], pygame.K_s],
                      [[-1, 0], pygame.K_a], [[1, 0], pygame.K_d]]:
             if check_condition([1, 1, 0, 1], pos=(self.pos[0] + args[0][0],
                                                   self.pos[1] + args[0][1]),
                                event=event, key=args[1]):
                 self.pos = (self.pos[0] + args[0][0], self.pos[1] + args[0][1])
-                [en.make_step() for en in enemies]
                 global can_go_next
                 can_go_next = False
                 break
+        else:
+            return
+        enemies.update(your_move=True)
 
     def attack(self, event):
+        global enemies
         for args in [[[0, -1], pygame.K_UP], [[0, 1], pygame.K_DOWN],
                      [[-1, 0], pygame.K_LEFT], [[1, 0], pygame.K_RIGHT]]:
             if check_condition([1, 0, 0, 1], pos=(self.pos[0] + args[0][0],
@@ -79,18 +98,26 @@ class Player(Character):
                 for en in [en for en in enemies if en.hp <= 0]:
                     enemies.remove(en)
                     self.kills += 1
-                [en.make_step() for en in enemies]
                 global can_go_next
                 can_go_next = False
                 break
+        else:
+            return
+        enemies.update(your_move=True)
 
 
 class BasicEnemy(Character):
-    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step):
-        super().__init__(hp, pos, damage)
+    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step, image):
+        super().__init__(hp, pos, damage, image)
         self.moves_per_step = moves_per_step
         self.cells_of_view = sphere_of_cells(view)
         self.found_radius = found_radius
+
+    def update(self, offset=None, size_changed=None, your_move=None):
+        if your_move is not None:
+            self.make_step()
+        else:
+            super().update(offset, size_changed)
 
     def make_step(self):
         if abs(self.pos[0] - player.pos[0]) + abs(self.pos[1] - player.pos[1]) <= self.found_radius:
@@ -142,9 +169,21 @@ class BasicEnemy(Character):
             self.find_lab_tuples(new_nexts, lb)
 
 
+class Enemy(BasicEnemy):
+    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step, image):
+        super().__init__(hp, damage, pos, found_radius, view, moves_per_step, image)
+
+
 class FastEnemy(BasicEnemy):
-    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step):
-        super().__init__(hp, damage, pos, found_radius, view, moves_per_step)
+    def __init__(self, hp, damage, pos, found_radius, view, moves_per_step, image):
+        super().__init__(hp, damage, pos, found_radius, view, moves_per_step, image)
+
+
+def load_image(name, colorkey=None):
+    image = pygame.image.load(f"data/{name}")
+    if colorkey is not None:
+        image.set_colorkey(image.get_at((0, 0)))
+    return image
 
 
 def check_condition(variants, pos=None, flat=None, event=None, key=None):
@@ -199,7 +238,8 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, chest, width_loading, height_loading, field_rect, drag_offset
+    global card, exit_ladder, enemies, focused, chest, width_loading, height_loading, \
+        field_rect, drag_offset, enemies, size
 
     structures = randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1])
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
@@ -232,15 +272,16 @@ def make_new_level():
                           for cell in sphere_of_cells(20)
                           if (max_cell[0] + cell[0], max_cell[1] + cell[1]) in card])
 
-    enemies = []
+    enemies = pygame.sprite.Group()
     flat = card.copy()
     flat2 = flat.copy()
     [flat.pop(cell) for cell in sphere_of_cells(20) if cell in flat]
     numb_enemies = int(structures * uniform(ENEMIES_MULTI_RANGE[0], ENEMIES_MULTI_RANGE[1]))
     for i in range(numb_enemies):
         cell = choice(list(flat))
-        enemies.append(choices([BasicEnemy(30, 1, cell, 5, 10, 1), FastEnemy(20, 1, cell, 7, 15, 3)],
-                               weights=[10, player.floor])[0])
+        enemies.add(choices([Enemy(30, 1, cell, 5, 10, 1, "Enemy.png"),
+                             FastEnemy(20, 1, cell, 7, 15, 3, "FastEnemy.png")],
+                            weights=[10, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -256,12 +297,13 @@ def make_new_level():
                   sorted(card.keys(), key=lambda x: x[0], reverse=True)[0][0] + 1,
                   sorted(card.keys(), key=lambda x: x[1], reverse=True)[0][1] + 1]
     drag_offset = [0, 0]
+    enemies.update(size_changed=size)
     make_field_surface()
 
 
 def draw_main_game():
     global size, drag_offset, drag, focused, can_go_next, time_for_next, card, state, \
-        floor_field, floor_field_sized
+        floor_field, floor_field_sized, enemies, player_group
     screen.fill('black')
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -278,6 +320,8 @@ def draw_main_game():
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
+            enemies.update(size_changed=True)
+            player_group.update(size_changed=True)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             drag = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -304,8 +348,9 @@ def draw_main_game():
         if pygame.key.get_pressed() and can_go_next:
             player.pressed_key(pygame.key.get_pressed())
 
-    draw_field()
-    draw_player()
+    offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
+    draw_field(offset)
+    draw_player(offset)
 
     pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
                     360 / 57.2958 * (time_for_next / time_rest) +
@@ -343,7 +388,7 @@ def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
 
 
 def draw_start_window(start_window_borders=[100, 450, 900, 550]):
-    global state, player, drag, focused, can_go_next, time_for_next, drag_offset, size
+    global state, player, drag, focused, can_go_next, time_for_next, drag_offset, size, player_group
     screen.fill("black")
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -351,7 +396,9 @@ def draw_start_window(start_window_borders=[100, 450, 900, 550]):
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
                 and start_window_borders[0] <= event.pos[0] <= start_window_borders[2] \
                 and start_window_borders[1] <= event.pos[1] <= start_window_borders[3]:
-            player = Player(10, (0, 0), 10)
+            player_group = pygame.sprite.Group()
+            player = Player(10, (0, 0), 10, "player.png")
+            player_group.add(player)
             state = "main"
             drag = False
             focused = True
@@ -370,7 +417,7 @@ def draw_start_window(start_window_borders=[100, 450, 900, 550]):
 
 def draw_end_window(end_window_borders=[780, 20, 200, 400],
                     exit_button_sizes=[200, 50], text_under_end_window=20):
-    global size, drag_offset, drag, focused, state, floor_field_sized
+    global size, drag_offset, drag, focused, state, floor_field_sized, enemies, player_group
     screen.fill("black")
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -387,6 +434,7 @@ def draw_end_window(end_window_borders=[780, 20, 200, 400],
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
+            enemies.update(size_changed=True)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if end_window_borders[0] + end_window_borders[2] // 2 - exit_button_sizes[0] // 2 <= \
                     event.pos[0] <= end_window_borders[0] + end_window_borders[2] // 2 - \
@@ -402,7 +450,7 @@ def draw_end_window(end_window_borders=[780, 20, 200, 400],
             drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
             focused = False
 
-    draw_field()
+    draw_field([player.pos[0] * size, player.pos[1] * size] if focused else drag_offset)
 
     pygame.draw.rect(screen, (255, 255, 255), (end_window_borders[0], end_window_borders[1],
                                                end_window_borders[2], end_window_borders[3]), 1)
@@ -446,7 +494,7 @@ def make_field_surface():
 
     list_of_tiles = []
     for tile in [f"floor{i}.png" for i in range(1, 4)]:
-        floor = pygame.image.load(f"data/{tile}")
+        floor = load_image(tile)
         floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
         list_of_tiles.append(floor)
 
@@ -459,11 +507,11 @@ def make_field_surface():
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
                                 (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
         if cell == exit_ladder:
-            tile = pygame.image.load("data/exit_ladder.png")
+            tile = load_image("exit_ladder.png", 1)
             tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
             tile.set_colorkey(tile.get_at((0, 0)))
         elif cell == chest:
-            tile = pygame.image.load("data/chest.png")
+            tile = load_image("chest.png", 1)
             tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
             tile.set_colorkey(tile.get_at((0, 0)))
         else:
@@ -477,32 +525,21 @@ def make_field_surface():
     # создается surface, где отображены все клетки сразу
 
 
-def draw_field():
-    global floor_field_sized, player, drag_offset
-    offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
+def draw_field(offset):
+    global floor_field_sized, player, drag_offset, enemies
 
     screen.blit(floor_field_sized, (width // 2 - offset[0] - size // 2 + field_rect[0] * size,
                                     height // 2 - offset[1] - size // 2 + field_rect[
                                         1] * size))  # поле
 
-    for en in enemies:
-        pygame.draw.circle(
-            screen,
-            {"BasicEnemy": (0, 0, 255), "FastEnemy": (255, 255, 0)}[en.__class__.__name__],
-            (width // 2 + size // 2 - offset[0] + en.pos[0] * size - size // 2,
-             height // 2 + size // 2 - offset[1] + en.pos[1] * size - size // 2),
-            size // 2)
+    enemies.update(offset)
+    enemies.draw(screen)
 
 
-def draw_player():
-    if focused:
-        pygame.draw.circle(screen, (255, 0, 0), (width // 2, height // 2),
-                           size // 2)
-    else:
-        pygame.draw.circle(screen, (255, 0, 0),
-                           (width // 2 - drag_offset[0] + player.pos[0] * size,
-                            height // 2 - drag_offset[1] + player.pos[1] * size),
-                           size // 2)
+def draw_player(offset):
+    global player, player_group
+    player_group.update(offset)
+    player_group.draw(screen)
 
 
 def end():
