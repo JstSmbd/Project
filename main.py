@@ -13,21 +13,6 @@ start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
 
 
-class Floor(pygame.sprite.Sprite):
-    def __init__(self, group, image, cell):
-        super().__init__(group)
-        self.image = image
-        self.rect = self.image.get_rect()
-        self.rect.x = 0
-        self.rect.y = 0
-        self.cell = cell
-
-    def update(self, offset):
-        global width, height, size
-        self.rect.x = width // 2 + self.cell[0] * size - offset[0] - size // 2
-        self.rect.y = height // 2 + self.cell[1] * size - offset[1] - size // 2
-
-
 class Character(pygame.sprite.Sprite):
     def __init__(self, hp, pos, damage, image):
         super().__init__()
@@ -41,7 +26,6 @@ class Character(pygame.sprite.Sprite):
         self.damage = damage
 
     def update(self, offset=None, size_changed=None):
-        global height, width, size
         if size_changed:
             self.image = pygame.transform.scale(self.image_orig, (size, size))
             self.image.set_colorkey(self.image.get_at((0, 0)))
@@ -65,13 +49,12 @@ class Player(Character):
             pygame.K_RIGHT]:
             self.attack(event)
         if self.hp <= 0:
-            global state, focused, drag_offset, size
+            global state, focused, drag_offset
             state = "end window"
             focused = False
             drag_offset = [self.pos[0] * size, self.pos[1] * size]
 
     def move(self, event):
-        global enemies
         for args in [[[0, -1], pygame.K_w], [[0, 1], pygame.K_s],
                      [[-1, 0], pygame.K_a], [[1, 0], pygame.K_d]]:
             if check_condition([1, 1, 0, 1], pos=(self.pos[0] + args[0][0],
@@ -86,7 +69,6 @@ class Player(Character):
         enemies.update(your_move=True)
 
     def attack(self, event):
-        global enemies
         for args in [[[0, -1], pygame.K_UP], [[0, 1], pygame.K_DOWN],
                      [[-1, 0], pygame.K_LEFT], [[1, 0], pygame.K_RIGHT]]:
             if check_condition([1, 0, 0, 1], pos=(self.pos[0] + args[0][0],
@@ -238,16 +220,14 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, chest, width_loading, height_loading, \
-        field_rect, drag_offset, enemies, size
+    global card, exit_ladder, enemies, focused, chest, field_rect, \
+        drag_offset, floor_field, floor_field_sized
 
     structures = randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1])
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
     card = start.copy()
     for i in range(structures):
         draw_loading_bar(i / structures)
-        global percent
-        percent = i / structures * 100, 2
         cells = []
         for cell in card:
             if (cell[0] + 1, cell[1]) not in card:
@@ -298,12 +278,42 @@ def make_new_level():
                   sorted(card.keys(), key=lambda x: x[1], reverse=True)[0][1] + 1]
     drag_offset = [0, 0]
     enemies.update(size_changed=size)
-    make_field_surface()
+
+    # ниже создается surface, где отображены все клетки сразу
+    list_of_tiles = []
+    for tile in [f"floor{i}.png" for i in range(1, 4)]:
+        floor = load_image(tile)
+        floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
+        list_of_tiles.append(floor)
+
+    floor_field = pygame.Surface(
+        ((field_rect[2] - field_rect[0]) * FOCUSE_RANGE[1], (field_rect[3] -
+                                                             field_rect[1]) * FOCUSE_RANGE[1]))
+    for cell in card.keys():
+        tile = choice(list_of_tiles)
+        tile = pygame.transform.rotate(tile, randint(0, 3) * 90)
+        floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
+                                (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
+        if cell == exit_ladder:
+            tile = load_image("exit_ladder.png", 1)
+            tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
+            tile.set_colorkey(tile.get_at((0, 0)))
+        elif cell == chest:
+            tile = load_image("chest.png", 1)
+            tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
+            tile.set_colorkey(tile.get_at((0, 0)))
+        else:
+            continue
+        floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
+                                (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
+
+    floor_field_sized = pygame.transform.scale(floor_field,
+                                               ((field_rect[2] - field_rect[0]) * size,
+                                                (field_rect[3] - field_rect[1]) * size))
 
 
 def draw_main_game():
-    global size, drag_offset, drag, focused, can_go_next, time_for_next, card, state, \
-        floor_field, floor_field_sized, enemies, player_group
+    global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, state
     screen.fill('black')
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -328,6 +338,7 @@ def draw_main_game():
             drag = False
         elif event.type == pygame.MOUSEMOTION and drag:
             drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
+            focused = False
             focused = False
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_f:
@@ -388,7 +399,7 @@ def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
 
 
 def draw_start_window(start_window_borders=[100, 450, 900, 550]):
-    global state, player, drag, focused, can_go_next, time_for_next, drag_offset, size, player_group
+    global state, player, drag, can_go_next, time_for_next, drag_offset, size, player_group
     screen.fill("black")
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -401,7 +412,6 @@ def draw_start_window(start_window_borders=[100, 450, 900, 550]):
             player_group.add(player)
             state = "main"
             drag = False
-            focused = True
             can_go_next = True
             time_for_next = 0
             drag_offset = [0, 0]
@@ -417,7 +427,7 @@ def draw_start_window(start_window_borders=[100, 450, 900, 550]):
 
 def draw_end_window(end_window_borders=[780, 20, 200, 400],
                     exit_button_sizes=[200, 50], text_under_end_window=20):
-    global size, drag_offset, drag, focused, state, floor_field_sized, enemies, player_group
+    global size, drag_offset, drag, focused, state, floor_field_sized
     screen.fill("black")
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -485,59 +495,20 @@ def draw_end_window(end_window_borders=[780, 20, 200, 400],
 
 
 def draw_choice_item():
-    draw_field()
-    draw_player()
-
-
-def make_field_surface():
-    global card, floor_field, field_rect, floor_field_sized, size, exit_ladder, chest
-
-    list_of_tiles = []
-    for tile in [f"floor{i}.png" for i in range(1, 4)]:
-        floor = load_image(tile)
-        floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-        list_of_tiles.append(floor)
-
-    floor_field = pygame.Surface(
-        ((field_rect[2] - field_rect[0]) * FOCUSE_RANGE[1], (field_rect[3] -
-                                                             field_rect[1]) * FOCUSE_RANGE[1]))
-    for cell in card.keys():
-        tile = choice(list_of_tiles)
-        tile = pygame.transform.rotate(tile, randint(0, 3) * 90)
-        floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
-                                (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
-        if cell == exit_ladder:
-            tile = load_image("exit_ladder.png", 1)
-            tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-            tile.set_colorkey(tile.get_at((0, 0)))
-        elif cell == chest:
-            tile = load_image("chest.png", 1)
-            tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-            tile.set_colorkey(tile.get_at((0, 0)))
-        else:
-            continue
-        floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
-                                (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
-
-    floor_field_sized = pygame.transform.scale(floor_field,
-                                               ((field_rect[2] - field_rect[0]) * size,
-                                                (field_rect[3] - field_rect[1]) * size))
-    # создается surface, где отображены все клетки сразу
+    global offset
+    draw_field(offset)
+    draw_player(offset)
 
 
 def draw_field(offset):
-    global floor_field_sized, player, drag_offset, enemies
-
-    screen.blit(floor_field_sized, (width // 2 - offset[0] - size // 2 + field_rect[0] * size,
-                                    height // 2 - offset[1] - size // 2 + field_rect[
-                                        1] * size))  # поле
-
+    screen.blit(floor_field_sized,
+                (width // 2 - offset[0] - size // 2 + field_rect[0] * size,
+                 height // 2 - offset[1] - size // 2 + field_rect[1] * size)) # поле
     enemies.update(offset)
     enemies.draw(screen)
 
 
 def draw_player(offset):
-    global player, player_group
     player_group.update(offset)
     player_group.draw(screen)
 
