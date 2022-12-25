@@ -5,12 +5,26 @@ import pygame
 from PIL import Image
 from random import choices, choice, randint, uniform
 
-STRUCTURES_RANGE = [20, 50]  # from: _ to: _
+STRUCTURES_RANGE = [10, 50]  # from: _ to: _
 EXTENDED_RANGE = [-5, 5]  # from: _ to: _
 ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
 FOCUSE_RANGE = [5, 30]
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
+items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
+
+
+class Item(pygame.sprite.Sprite):
+    def __init__(self, index, im_name, pos, group):
+        super().__init__(group)
+        self.image = pygame.image.load(f"data/{im_name}")
+        self.index = index
+        self.image.set_colorkey(self.image.get_at((0, 0)))
+        self.rect = self.image.get_rect().move(pos)
+
+    def update(self, pos):
+        if self.rect.collidepoint(pos):
+            return self.index
 
 
 class Character(pygame.sprite.Sprite):
@@ -40,7 +54,10 @@ class Player(Character):
         super().__init__(max_hp, pos, damage, image)
         self.max_hp = max_hp
         self.floor = 1
+        self.moves_per_step = 1
+        self.moves_last = self.moves_per_step
         self.kills = 0
+        self.items = []
 
     def pressed_key(self, event):
         if event[pygame.K_w] or event[pygame.K_s] or event[pygame.K_a] or event[pygame.K_d]:
@@ -61,12 +78,13 @@ class Player(Character):
                                                   self.pos[1] + args[0][1]),
                                event=event, key=args[1]):
                 self.pos = (self.pos[0] + args[0][0], self.pos[1] + args[0][1])
+                self.moves_last -= 1
                 global can_go_next
                 can_go_next = False
                 break
-        else:
-            return
-        enemies.update(your_move=True)
+        if self.moves_last <= 0:
+            self.moves_last = self.moves_per_step
+            enemies.update(your_move=True)
 
     def attack(self, event):
         for args in [[[0, -1], pygame.K_UP], [[0, 1], pygame.K_DOWN],
@@ -82,6 +100,7 @@ class Player(Character):
                     self.kills += 1
                 global can_go_next
                 can_go_next = False
+                self.moves_last = self.moves_per_step
                 break
         else:
             return
@@ -220,8 +239,7 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, chest, field_rect, \
-        drag_offset, floor_field, floor_field_sized
+    global card, exit_ladder, enemies, focused, chest, field_rect, drag_offset, chest_looted
 
     structures = randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1])
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1])
@@ -271,6 +289,7 @@ def make_new_level():
                                               abs(cell[1]), 1.5) for cell in flat2])[0]
 
     focused = True
+    chest_looted = False
     player.pos = (0, 0)
     field_rect = [sorted(card.keys(), key=lambda x: x[0])[0][0],
                   sorted(card.keys(), key=lambda x: x[1])[0][1],
@@ -278,8 +297,12 @@ def make_new_level():
                   sorted(card.keys(), key=lambda x: x[1], reverse=True)[0][1] + 1]
     drag_offset = [0, 0]
     enemies.update(size_changed=size)
+    make_surface_field()
 
-    # ниже создается surface, где отображены все клетки сразу
+
+def make_surface_field():
+    global floor_field, floor_field_sized
+    """ниже создается surface, где отображены все клетки сразу, которые не будут меняться"""
     list_of_tiles = []
     for tile in [f"floor{i}.png" for i in range(1, 4)]:
         floor = load_image(tile)
@@ -298,10 +321,10 @@ def make_new_level():
             tile = load_image("exit_ladder.png", 1)
             tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
             tile.set_colorkey(tile.get_at((0, 0)))
-        elif cell == chest:
-            tile = load_image("chest.png", 1)
-            tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-            tile.set_colorkey(tile.get_at((0, 0)))
+        # elif cell == chest and not chest_looted:
+        #     tile = load_image("chest.png", 1)
+        #     tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
+        #     tile.set_colorkey(tile.get_at((0, 0)))
         else:
             continue
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
@@ -313,7 +336,8 @@ def make_new_level():
 
 
 def draw_main_game():
-    global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, state
+    global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, \
+        state, chest_looted
     screen.fill('black')
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -348,7 +372,7 @@ def draw_main_game():
                 if player.pos == exit_ladder:
                     make_new_level()
                     player.floor += 1
-                elif player.pos == chest:
+                elif player.pos == chest and not chest_looted:
                     state = "choice item"
         elif event.type == MYEVENTTYPE:
             if not can_go_next:
@@ -361,6 +385,7 @@ def draw_main_game():
 
     offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
     draw_field(offset)
+    draw_chest(offset)
     draw_player(offset)
 
     pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
@@ -369,6 +394,9 @@ def draw_main_game():
     pygame.draw.arc(screen, (255, 150, 0), (50, height - 100, 50, 50), 90 / 57.2958,
                     360 / 57.2958 * (time_for_next / time_rest) +
                     90 / 57.2958, 5)  # время до следующего хода
+
+    text = pygame.font.Font(None, 50).render(str(player.moves_last), True, (255, 255, 255))
+    screen.blit(text, (50 + 25 - text.get_width() // 2, height - 100 + 25 - text.get_height() // 2))
 
     hp_bar_height = 200
     hp_bar_line_width = 2
@@ -495,15 +523,54 @@ def draw_end_window(end_window_borders=[780, 20, 200, 400],
 
 
 def draw_choice_item():
-    global offset
-    draw_field(offset)
-    draw_player(offset)
+    global player, size, focused, drag_offset, state, chest_looted
+    offset = [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
+    copy_items = items.copy()
+    items_for_choice = []
+    for _ in range(3):
+        items_for_choice.append(
+            choices(copy_items, weights=[len(player.items) - player.items.count(item) + 1
+                                         for item in copy_items])[0])
+        copy_items.remove(items_for_choice[-1])
+    items_group = pygame.sprite.Group()
+    for i, coord in enumerate([[100, 100], [400, 400], [700, 100]]):
+        Item(items_for_choice[i][0], items_for_choice[i][1], coord, items_group)
+
+    while state == "choice item":
+        screen.fill("black")
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                end()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if result := [item.update(event.pos) for item in items_group
+                              if item.update(event.pos) is not None]:
+                    use_item(result[0])
+                    chest_looted = True
+                    state = "main"
+                    break
+                print(result)
+        draw_field(offset)
+        draw_chest(offset)
+        draw_player(offset)
+        items_group.draw(screen)
+        pygame.display.flip()
+
+
+def use_item(index):
+    player.items.append(index)
+    if index == 0:
+        player.max_hp += 1
+        player.hp = player.max_hp
+    elif index == 1:
+        player.damage += 5
+    elif index == 2:
+        player.moves_per_step += 1
 
 
 def draw_field(offset):
     screen.blit(floor_field_sized,
                 (width // 2 - offset[0] - size // 2 + field_rect[0] * size,
-                 height // 2 - offset[1] - size // 2 + field_rect[1] * size)) # поле
+                 height // 2 - offset[1] - size // 2 + field_rect[1] * size))  # поле
     enemies.update(offset)
     enemies.draw(screen)
 
@@ -511,6 +578,15 @@ def draw_field(offset):
 def draw_player(offset):
     player_group.update(offset)
     player_group.draw(screen)
+
+
+def draw_chest(offset):
+    global chest_looted
+    if not chest_looted:
+        copy_chest = pygame.transform.scale(chest_im, (size, size))
+        copy_chest.set_colorkey(copy_chest.get_at((0, 0)))
+        screen.blit(copy_chest, (width // 2 + chest[0] * size - size // 2 - offset[0],
+                                 height // 2 + chest[1] * size - size // 2 - offset[1]))
 
 
 def end():
@@ -527,6 +603,7 @@ sized = width, height = 1000, 1000
 screen = pygame.display.set_mode(sized)
 places = [load_new_place(f"paint{i}.png") for i in range(1, 6)]  # структуры можно также хранить в
 # БД или csv/текстовом файле
+chest_im = load_image("chest.png", 1)
 
 
 if __name__ == '__main__':
