@@ -14,6 +14,23 @@ start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 
 items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
 
 
+def load_image(name, colorkey=None):
+    image = pygame.image.load(f"data/{name}")
+    if colorkey is not None:
+        image.set_colorkey(image.get_at((0, 0)))
+    return image
+
+
+class Weapon:
+    def __init__(self, place, damage, im_name):
+        self.place = place
+        self.damage = damage
+        self.image = load_image(im_name)
+
+
+weapons = [Weapon([[0, -1], [0, -2]], 10, "sword1.png")]
+
+
 class Item(pygame.sprite.Sprite):
     def __init__(self, index, im_name, pos, group):
         super().__init__(group)
@@ -33,11 +50,13 @@ class Character(pygame.sprite.Sprite):
         self.image_orig = load_image(image, 1)
         self.image = self.image_orig
         self.rect = self.image.get_rect()
-        self.rect.x = 0
-        self.rect.y = 0
         self.hp = hp
         self.max_hp = hp
         self.pos = pos
+        self.rect.x = 0
+        self.rect.y = 0
+        self.average_pos = [0, 0]
+        self.animated_row = []
         self.damage = damage
 
     def update(self, offset=None, size_changed=None):
@@ -45,6 +64,18 @@ class Character(pygame.sprite.Sprite):
             self.image = pygame.transform.scale(self.image_orig, (size, size))
             self.image.set_colorkey(self.image.get_at((0, 0)))
             self.rect = self.image.get_rect()
+        elif self.animated_row:
+            next_pos = [self.animated_row[0][0] - self.pos[0], self.animated_row[0][1] - self.pos[1]]
+            self.average_pos = [self.average_pos[0] + next_pos[0] / 3,
+                                self.average_pos[1] + next_pos[1] / 3]
+            if -1 < self.average_pos[0] < 1 and -1 < self.average_pos[1] < 1 and self.average_pos != [0, 0]:
+                self.rect.x, self.rect.y = (
+                    width // 2 - size // 2 - offset[0] + (self.pos[0] + self.average_pos[0]) * size,
+                    height // 2 - size // 2 - offset[1] + (self.pos[1] + self.average_pos[1]) * size)
+            else:
+                self.pos = tuple(self.animated_row[0])
+                self.animated_row = self.animated_row[1:]
+                self.average_pos = [0, 0]
         else:
             self.rect.x, self.rect.y = (
                 width // 2 - size // 2 - offset[0] + self.pos[0] * size,
@@ -59,6 +90,7 @@ class Player(Character):
         self.moves_last = self.moves_per_step
         self.kills = 0
         self.items = []
+        self.weapon_now = Weapon([[0, -1]], 5, "sword.png")
 
     def pressed_key(self, event):
         if event[pygame.K_w] or event[pygame.K_s] or event[pygame.K_a] or event[pygame.K_d]:
@@ -77,8 +109,8 @@ class Player(Character):
                      [[-1, 0], pygame.K_a], [[1, 0], pygame.K_d]]:
             if check_condition([1, 1, 0, 1], pos=(self.pos[0] + args[0][0],
                                                   self.pos[1] + args[0][1]),
-                               event=event, key=args[1]):
-                self.pos = (self.pos[0] + args[0][0], self.pos[1] + args[0][1])
+                               event=event, key=args[1]) and self.average_pos == [0, 0]:
+                self.animated_row.append([self.pos[0] + args[0][0], self.pos[1] + args[0][1]])
                 self.moves_last -= 1
                 global can_go_next
                 can_go_next = False
@@ -88,14 +120,15 @@ class Player(Character):
             enemies.update(your_move=True)
 
     def attack(self, event):
-        for args in [[[0, -1], pygame.K_UP], [[0, 1], pygame.K_DOWN],
-                     [[-1, 0], pygame.K_LEFT], [[1, 0], pygame.K_RIGHT]]:
-            if check_condition([1, 0, 0, 1], pos=(self.pos[0] + args[0][0],
-                                                  self.pos[1] + args[0][1]),
-                               event=event, key=args[1]):
-                AnimatedAttack((width // 2 + (self.pos[0] + args[0][0]) * size,
-                                height // 2 + (self.pos[1] + args[0][1]) * size)).update(
-                    check_attack=True, offset=get_offset())
+        for args in [[self.weapon_now.place, pygame.K_UP],
+                     [rotate(self.weapon_now.place, 2), pygame.K_DOWN],
+                     [rotate(self.weapon_now.place, 1), pygame.K_LEFT],
+                     [rotate(self.weapon_now.place, 3), pygame.K_RIGHT]]:
+            if event[args[1]]:
+                for arg in args[0]:
+                    AnimatedAttack((width // 2 + (self.pos[0] + arg[0]) * size,
+                                    height // 2 + (self.pos[1] + arg[1]) * size))
+                attacks_group.update(check_attack=True, offset=get_offset())
                 global can_go_next
                 can_go_next = False
                 self.moves_last = self.moves_per_step
@@ -124,16 +157,15 @@ class AnimatedAttack(pygame.sprite.Sprite):
             cut_sheet(load_image("attack.png", 1), 5, 1)
         self.cur_frame = 0
         self.x, self.y = pos
-        self.image = self.frames[self.cur_frame]
+        self.image = pygame.transform.scale(self.frames[self.cur_frame], (size, size))
         self.rect = self.image.get_rect()
         self.delitel = 5
 
     def update(self, offset=None, check_attack=False):
         if check_attack:
             enemies.update(check_attack=True,
-                           rect=(self.x - offset[0] - self.image.get_width() // 2 + 1,
-                                 self.y - offset[1] -
-                                 self.image.get_height() // 2 + 1, size - 2, size - 2))
+                           rect=(self.x - offset[0] - self.image.get_width() // 2,
+                                 self.y - offset[1] - self.image.get_height() // 2, size, size))
         elif self.cur_frame < len(self.frames) * self.delitel:
             self.rect.x = self.x - offset[0] - self.image.get_width() // 2
             self.rect.y = self.y - offset[1] - self.image.get_height() // 2
@@ -163,10 +195,9 @@ class BasicEnemy(Character):
             self.make_step()
         elif check_attack:
             if self.rect.colliderect(rect):
+                print(self.rect, rect)
                 self.hp -= player.damage
                 self.show_hp = True
-            else:
-                self.show_hp = False
         else:
             super().update(offset, size_changed)
 
@@ -176,24 +207,28 @@ class BasicEnemy(Character):
             for cell in self.cells_of_view:
                 if (self.pos[0] + cell[0], self.pos[1] + cell[1]) in card:
                     lb[(self.pos[0] + cell[0], self.pos[1] + cell[1])] = 0
-            result = self.find_path(lb, self.pos, player.pos)
-            if result and (path := [cell for cell in result if cell != player.pos]):  # <-- path
-                self.pos = path[:self.moves_per_step][-1]
+            need_pos = tuple(player.animated_row[0]) if player.animated_row else player.pos
+            result = self.find_path(lb, self.pos, need_pos)
+            if result and (path := [cell for cell in result if cell != need_pos]):  # <-- path
+                self.animated_row.extend(path[:self.moves_per_step])
             elif result is None:  # если нельзя пройти до игрока
                 self.make_random_step()
             if result and len(path) < self.moves_per_step:  # если остались ходы
                 player.hp -= self.damage
-                AnimatedAttack((width // 2 + player.pos[0] * size, height // 2 + player.pos[1] * size))
+                AnimatedAttack((width // 2 + need_pos[0] * size, height // 2 + need_pos[1] * size))
         else:
             self.make_random_step()
 
     def make_random_step(self):
+        pos_now = self.pos
         for _ in range(self.moves_per_step):
             variants = []
             for args in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
-                if check_condition([1, 1], pos=(self.pos[0] + args[0], self.pos[1] + args[1])):
-                    variants.append((self.pos[0] + args[0], self.pos[1] + args[1]))
-            self.pos = choice(variants)
+                if check_condition([1, 1], pos=(pos_now[0] + args[0], pos_now[1] + args[1])):
+                    variants.append((pos_now[0] + args[0], pos_now[1] + args[1]))
+            if variants:
+                pos_now = choice(variants)
+                self.animated_row.append(pos_now)
 
     def find_path(self, lab, start, end):
         copy_lab = lab.copy()
@@ -233,14 +268,7 @@ class FastEnemy(BasicEnemy):
 
 def get_offset():
     global size, focused, drag_offset
-    return [player.pos[0] * size, player.pos[1] * size] if focused else drag_offset
-
-
-def load_image(name, colorkey=None):
-    image = pygame.image.load(f"data/{name}")
-    if colorkey is not None:
-        image.set_colorkey(image.get_at((0, 0)))
-    return image
+    return [(player.pos[0] + player.average_pos[0]) * size, (player.pos[1] + player.average_pos[1]) * size] if focused else drag_offset
 
 
 def check_condition(variants, pos=None, flat=None, event=None, key=None):
@@ -295,7 +323,7 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, chest, field_rect, drag_offset, chest_looted, usually_lvl
+    global card, exit_ladder, enemies, focused, chest, field_rect, drag_offset, chest_looted, usually_lvl, floor_weapons
     usually_lvl = player.floor <= 1 or randint(0, round(5 * (2 - hardness))) != 0
     structures = int(randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1]) * hardness)
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1]) if usually_lvl else -10
@@ -335,7 +363,7 @@ def make_new_level():
         cell = choice(list(flat))
         enemies.add(choices([Enemy(30 * hardness, 1, cell, round(10 * hardness), 1, "Enemy.png"),
                              FastEnemy(20, 1, cell, round(15 * hardness), 3, "FastEnemy.png")],
-                            weights=[10, player.floor])[0])
+                            weights=[0, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -352,6 +380,13 @@ def make_new_level():
                   sorted(card.keys(), key=lambda x: x[0], reverse=True)[0][0] + 1,
                   sorted(card.keys(), key=lambda x: x[1], reverse=True)[0][1] + 1]
     drag_offset = [0, 0]
+
+    flat2.pop(chest)
+    floor_weapons = []
+    if randint(0, 0) == 0:
+        for _ in range(randint(1, round(2.5 - hardness))):
+            floor_weapons.append([choice(list(flat2.keys())), choice(weapons)])
+
     enemies.update(size_changed=size)
     make_surface_field()
 
@@ -389,7 +424,7 @@ def make_surface_field():
 
 def draw_main_game():
     global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, \
-        state, chest_looted, usually_lvl
+        state, chest_looted, usually_lvl, floor_weapons
     screen.fill('black')
     for event in pygame.event.get():
         if event.type == pygame.QUIT or (
@@ -428,19 +463,24 @@ def draw_main_game():
                     make_new_level()
                 elif player.pos == chest and not chest_looted:
                     state = "choice item"
+                elif result := [weapon for weapon in floor_weapons if weapon[0] == (tuple(player.animated_row[0]) if player.animated_row else player.pos)]:
+                    floor_weapons.remove(result[0])
+                    floor_weapons.append([result[0][0], player.weapon_now])
+                    player.weapon_now = result[0][1]
         elif event.type == MYEVENTTYPE:
             if not can_go_next:
                 time_for_next += timer_speed
             if time_for_next >= time_rest:
                 can_go_next = True
                 time_for_next = 0
-        if pygame.key.get_pressed() and can_go_next:
+        if pygame.key.get_pressed() and can_go_next and all([len(enemy.animated_row) == 0 for enemy in enemies]):
             player.pressed_key(pygame.key.get_pressed())
 
     offset = get_offset()
     draw_field(offset)
     if not usually_lvl and len(enemies) == 0:
         draw_exit_ladder(offset)
+    draw_floor_weapons(offset)
     draw_chest(offset)
     draw_player(offset)
     attacks_group.update(offset)
@@ -504,15 +544,15 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
                     and start_window_borders[0] <= event.pos[0] <= start_window_borders[2] \
                     and start_window_borders[1] <= event.pos[1] <= start_window_borders[3]:
-                player_group = pygame.sprite.Group()
-                player = Player(10, (0, 0), 10, "player.png")
-                player_group.add(player)
                 state = "main"
                 drag = False
                 can_go_next = True
                 time_for_next = 0
                 drag_offset = [0, 0]
                 size = 30
+                player_group = pygame.sprite.Group()
+                player = Player(10, (0, 0), 10, "player.png")
+                player_group.add(player)
                 make_new_level()
                 return
             elif event.type == pygame.MOUSEBUTTONDOWN and start_window_borders[0] <= \
@@ -713,6 +753,15 @@ def draw_exit_ladder(offset):
                                    height // 2 + exit_ladder[1] * size - size // 2 - offset[1]))
 
 
+def draw_floor_weapons(offset):
+    global floor_weapons
+    for weapon in floor_weapons:
+        image = pygame.transform.scale(weapon[1].image, (size, size))
+        image.set_colorkey(image.get_at((0, 0)))
+        screen.blit(image, (width // 2 - image.get_width() // 2 - offset[0] + weapon[0][0] * size,
+                            height // 2 - image.get_height() // 2 - offset[1] + weapon[0][1] * size))
+
+
 def end():
     pygame.quit()
     exit()
@@ -726,7 +775,8 @@ time_rest = 100  # промежуток между ходами в миллис�
 clock = pygame.time.Clock()
 pygame.time.set_timer(MYEVENTTYPE, timer_speed)
 attacks_group = pygame.sprite.Group()
-sized = width, height = pygame.display.Info().current_w, pygame.display.Info().current_h
+sized = width, height = 1000, 1000
+pygame.display.Info().current_w, pygame.display.Info().current_h
 screen = pygame.display.set_mode(sized)
 places = [load_new_place(f"paint{i}.png") for i in range(1, 6)]  # структуры можно также хранить в
 # БД или csv/текстовом файле
