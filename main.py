@@ -1,5 +1,3 @@
-import random
-
 import pygame
 
 from PIL import Image
@@ -12,6 +10,7 @@ FOCUSE_RANGE = [5, 30]
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
 items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
+FPS = 60
 
 
 def load_image(name, colorkey=None):
@@ -58,6 +57,7 @@ class Character(pygame.sprite.Sprite):
         self.average_pos = [0, 0]
         self.animated_row = []
         self.damage = damage
+        self.cells_per_move = 1 if self.__class__.__name__ == "Player" else self.moves_per_step
 
     def update(self, offset=None, size_changed=None):
         if size_changed:
@@ -66,8 +66,8 @@ class Character(pygame.sprite.Sprite):
             self.rect = self.image.get_rect()
         elif self.animated_row:
             next_pos = [self.animated_row[0][0] - self.pos[0], self.animated_row[0][1] - self.pos[1]]
-            self.average_pos = [self.average_pos[0] + next_pos[0] / 3,
-                                self.average_pos[1] + next_pos[1] / 3]
+            self.average_pos = [self.average_pos[0] + next_pos[0] / (FPS / (self.cells_per_move / (time_rest * 0.001))),
+                                self.average_pos[1] + next_pos[1] / (FPS / (self.cells_per_move / (time_rest * 0.001)))]
             if -1 < self.average_pos[0] < 1 and -1 < self.average_pos[1] < 1 and self.average_pos != [0, 0]:
                 self.rect.x, self.rect.y = (
                     width // 2 - size // 2 - offset[0] + (self.pos[0] + self.average_pos[0]) * size,
@@ -178,8 +178,8 @@ class AnimatedAttack(pygame.sprite.Sprite):
 
 class BasicEnemy(Character):
     def __init__(self, hp, damage, pos, view, moves_per_step, image):
-        super().__init__(hp, pos, damage, image)
         self.moves_per_step = moves_per_step
+        super().__init__(hp, pos, damage, image)
         self.cells_of_view = sphere_of_cells(view)
         self.found_radius = view // 2
         self.show_hp = False
@@ -195,8 +195,7 @@ class BasicEnemy(Character):
             self.make_step()
         elif check_attack:
             if self.rect.colliderect(rect):
-                print(self.rect, rect)
-                self.hp -= player.damage
+                self.hp -= player.damage + player.weapon_now.damage
                 self.show_hp = True
         else:
             super().update(offset, size_changed)
@@ -288,18 +287,14 @@ def check_condition(variants, pos=None, flat=None, event=None, key=None):
 
 def load_new_place(filename):
     new = []
-    im = Image.open(f"data/{filename}")
-    pixels = im.load()
-    x, y = im.size
-    firsts = [0, 0]
-    find_first = pixels[0, 0] != (0, 0, 0, 255)
-    for i in range(x):
-        for j in range(y):
-            if pixels[i, j] == (0, 0, 0, 255) or pixels[i, j] == (0, 0, 0):
-                if find_first:
-                    find_first = False
-                    firsts = [i, j]
-                new.append([i - firsts[0], j - firsts[1]])
+    f = open("data/" + filename, "r", encoding="utf-8")
+    firsts = []
+    for i, row in enumerate(f.read().split("\n")):
+        for j, symb in enumerate(row):
+            if symb == "*":
+                if not firsts:
+                    firsts = [j, i]
+                new.append([j - firsts[0], i - firsts[1]])
     return new
 
 
@@ -363,7 +358,7 @@ def make_new_level():
         cell = choice(list(flat))
         enemies.add(choices([Enemy(30 * hardness, 1, cell, round(10 * hardness), 1, "Enemy.png"),
                              FastEnemy(20, 1, cell, round(15 * hardness), 3, "FastEnemy.png")],
-                            weights=[0, player.floor])[0])
+                            weights=[10, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -383,7 +378,7 @@ def make_new_level():
 
     flat2.pop(chest)
     floor_weapons = []
-    if randint(0, 0) == 0:
+    if randint(0, round(0.5 + hardness * 2)) == 0:
         for _ in range(randint(1, round(2.5 - hardness))):
             floor_weapons.append([choice(list(flat2.keys())), choice(weapons)])
 
@@ -478,10 +473,6 @@ def draw_main_game():
 
     offset = get_offset()
     draw_field(offset)
-    if not usually_lvl and len(enemies) == 0:
-        draw_exit_ladder(offset)
-    draw_floor_weapons(offset)
-    draw_chest(offset)
     draw_player(offset)
     attacks_group.update(offset)
     attacks_group.draw(screen)
@@ -506,7 +497,7 @@ def draw_main_game():
                            player.max_hp + hp_bar_line_width), 26,
              (hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) / player.max_hp))
     pygame.display.flip()
-    clock.tick(60)
+    clock.tick(FPS)
 
 
 def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
@@ -551,7 +542,7 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
                 drag_offset = [0, 0]
                 size = 30
                 player_group = pygame.sprite.Group()
-                player = Player(10, (0, 0), 10, "player.png")
+                player = Player(10, (0, 0), 5, "player.png")
                 player_group.add(player)
                 make_new_level()
                 return
@@ -607,7 +598,7 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
 
 def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
                     text_under_end_window=20):
-    global size, drag_offset, drag, focused, state, floor_field_sized
+    global size, drag_offset, drag, focused, state, floor_field_sized, chest_looted, usually_lvl
     end_window_borders = [width - end_window_sizes[0] - 20, 20, end_window_sizes[0],
                           end_window_sizes[1]]
     screen.fill("black")
@@ -643,7 +634,7 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
             drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
             focused = False
 
-    draw_field([player.pos[0] * size, player.pos[1] * size] if focused else drag_offset)
+    draw_field(get_offset())
 
     pygame.draw.rect(screen, (255, 255, 255), (end_window_borders[0], end_window_borders[1],
                                                end_window_borders[2], end_window_borders[3]), 1)
@@ -728,6 +719,11 @@ def draw_field(offset):
     screen.blit(floor_field_sized,
                 (width // 2 - offset[0] - size // 2 + field_rect[0] * size,
                  height // 2 - offset[1] - size // 2 + field_rect[1] * size))  # поле
+    draw_floor_weapons(offset)
+    if not chest_looted:
+        draw_chest(offset)
+    if usually_lvl or len(enemies) == 0:
+        draw_exit_ladder(offset)
     enemies.update(offset)
     enemies.draw(screen)
 
@@ -775,10 +771,9 @@ time_rest = 100  # промежуток между ходами в миллис�
 clock = pygame.time.Clock()
 pygame.time.set_timer(MYEVENTTYPE, timer_speed)
 attacks_group = pygame.sprite.Group()
-sized = width, height = 1000, 1000
-pygame.display.Info().current_w, pygame.display.Info().current_h
+sized = width, height = pygame.display.Info().current_w, pygame.display.Info().current_h
 screen = pygame.display.set_mode(sized)
-places = [load_new_place(f"paint{i}.png") for i in range(1, 6)]  # структуры можно также хранить в
+places = [load_new_place(f"places/place{i}.txt") for i in range(1, 6)]  # структуры можно также хранить в
 # БД или csv/текстовом файле
 chest_im = load_image("chest.png", 1)
 exit_ladder_im = load_image("exit_ladder.png", 1)
