@@ -2,14 +2,14 @@ import pygame
 
 from PIL import Image
 from random import choices, choice, randint, uniform
+from math import ceil
 
 STRUCTURES_RANGE = [10, 50]  # from: _ to: _
 EXTENDED_RANGE = [-5, 5]  # from: _ to: _
 ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
-FOCUSE_RANGE = [5, 30]
+FOCUSE_RANGE = [5, 100]
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
-items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
 FPS = 60
 
 
@@ -24,18 +24,14 @@ class Weapon:
     def __init__(self, place, damage, im_name):
         self.place = place
         self.damage = damage
-        self.image = load_image(im_name)
-
-
-weapons = [Weapon([[0, -1], [0, -2]], 10, "sword1.png")]
+        self.image = load_image("weapons/" + im_name)
 
 
 class Item(pygame.sprite.Sprite):
     def __init__(self, index, im_name, pos, group):
         super().__init__(group)
-        self.image = pygame.image.load(f"data/{im_name}")
+        self.image = pygame.image.load(f"data/items/{im_name}")
         self.index = index
-        self.image.set_colorkey(self.image.get_at((0, 0)))
         self.rect = self.image.get_rect().move(pos)
 
     def update(self, pos):
@@ -46,8 +42,8 @@ class Item(pygame.sprite.Sprite):
 class Character(pygame.sprite.Sprite):
     def __init__(self, hp, pos, damage, image):
         super().__init__()
-        self.image_orig = load_image(image, 1)
-        self.image = self.image_orig
+        self.image_orig = load_image(image)
+        self.image = pygame.transform.scale(self.image_orig, (size, size))
         self.rect = self.image.get_rect()
         self.hp = hp
         self.max_hp = hp
@@ -58,28 +54,46 @@ class Character(pygame.sprite.Sprite):
         self.animated_row = []
         self.damage = damage
         self.cells_per_move = 1 if self.__class__.__name__ == "Player" else self.moves_per_step
+        self.animations = [cut_sheet(load_image(f"{self.__class__.__name__.lower()}_walk.png"),
+                                     {"Player": 3, "Enemy": 3, "FastEnemy": 3}[
+                                         self.__class__.__name__], 1)[0],
+                           cut_sheet(load_image(f"{self.__class__.__name__.lower()}_attack.png"),
+                                     {"Player": 3, "Enemy": 3, "FastEnemy": 3}[
+                                         self.__class__.__name__], 1)[0]]
+        self.frame = 0
 
-    def update(self, offset=None, size_changed=None):
-        if size_changed:
-            self.image = pygame.transform.scale(self.image_orig, (size, size))
-            self.image.set_colorkey(self.image.get_at((0, 0)))
-            self.rect = self.image.get_rect()
-        elif self.animated_row:
-            next_pos = [self.animated_row[0][0] - self.pos[0], self.animated_row[0][1] - self.pos[1]]
-            self.average_pos = [self.average_pos[0] + next_pos[0] / (FPS / (self.cells_per_move / (time_rest * 0.001))),
-                                self.average_pos[1] + next_pos[1] / (FPS / (self.cells_per_move / (time_rest * 0.001)))]
-            if -1 < self.average_pos[0] < 1 and -1 < self.average_pos[1] < 1 and self.average_pos != [0, 0]:
-                self.rect.x, self.rect.y = (
-                    width // 2 - size // 2 - offset[0] + (self.pos[0] + self.average_pos[0]) * size,
-                    height // 2 - size // 2 - offset[1] + (self.pos[1] + self.average_pos[1]) * size)
+    def update(self, offset=None):
+        if self.animated_row:
+            if self.animated_row[0] == "attack":
+                if len(self.animated_row) > 1 or self.frame // (FPS // 6) >= len(self.animations[1]):
+                    self.frame = 0
+                    self.animated_row = self.animated_row[1:]
+                else:
+                    self.image = pygame.transform.scale(self.animations[1]
+                                                        [self.frame // (FPS // 6)], (size, size))
             else:
-                self.pos = tuple(self.animated_row[0])
-                self.animated_row = self.animated_row[1:]
-                self.average_pos = [0, 0]
+                self.image = pygame.transform.scale(self.animations[0]
+                                                    [self.frame // (FPS // 12) %
+                                                     len(self.animations[0])], (size, size))
+                next_pos = [self.animated_row[0][0] - self.pos[0],
+                            self.animated_row[0][1] - self.pos[1]]
+                self.average_pos = [self.average_pos[0] + next_pos[0] / (
+                        FPS / (self.cells_per_move / (time_rest * 0.001))),
+                                    self.average_pos[1] + next_pos[1] / (
+                                            FPS / (self.cells_per_move / (time_rest * 0.001)))]
+                if not (-1 < self.average_pos[0] < 1 and -1 < self.average_pos[1] < 1
+                        and self.average_pos != [0, 0]):
+                    self.pos = tuple(self.animated_row[0])
+                    self.animated_row = self.animated_row[1:]
+                    self.average_pos = [0, 0]
+            self.frame += 1
         else:
-            self.rect.x, self.rect.y = (
-                width // 2 - size // 2 - offset[0] + self.pos[0] * size,
-                height // 2 - size // 2 - offset[1] + self.pos[1] * size)
+            self.frame = 0
+            self.image = pygame.transform.scale(self.image_orig, (size, size))
+        self.rect = self.image.get_rect()
+        self.rect.x, self.rect.y = (
+            width // 2 - size // 2 - offset[0] + (self.pos[0] + self.average_pos[0]) * size,
+            height // 2 - size // 2 - offset[1] + (self.pos[1]  + self.average_pos[1]) * size)
 
 
 class Player(Character):
@@ -128,7 +142,7 @@ class Player(Character):
                 for arg in args[0]:
                     AnimatedAttack((width // 2 + (self.pos[0] + arg[0]) * size,
                                     height // 2 + (self.pos[1] + arg[1]) * size))
-                attacks_group.update(check_attack=True, offset=get_offset())
+                self.animated_row.append("attack")
                 global can_go_next
                 can_go_next = False
                 self.moves_last = self.moves_per_step
@@ -136,44 +150,6 @@ class Player(Character):
         else:
             return
         enemies.update(your_move=True)
-
-
-def cut_sheet(sheet, columns, rows):
-    rect = pygame.Rect(0, 0, sheet.get_width() // columns,
-                       sheet.get_height() // rows)
-    frames = []
-    for j in range(rows):
-        for i in range(columns):
-            frame_location = (rect.w * i, rect.h * j)
-            frames.append(sheet.subsurface(pygame.Rect(
-                frame_location, rect.size)))
-    return frames, rect.w, rect.h
-
-
-class AnimatedAttack(pygame.sprite.Sprite):
-    def __init__(self, pos):
-        super().__init__(attacks_group)
-        self.frames, self.width, self.height = \
-            cut_sheet(load_image("attack.png", 1), 5, 1)
-        self.cur_frame = 0
-        self.x, self.y = pos
-        self.image = pygame.transform.scale(self.frames[self.cur_frame], (size, size))
-        self.rect = self.image.get_rect()
-        self.delitel = 5
-
-    def update(self, offset=None, check_attack=False):
-        if check_attack:
-            enemies.update(check_attack=True,
-                           rect=(self.x - offset[0] - self.image.get_width() // 2,
-                                 self.y - offset[1] - self.image.get_height() // 2, size, size))
-        elif self.cur_frame < len(self.frames) * self.delitel:
-            self.rect.x = self.x - offset[0] - self.image.get_width() // 2
-            self.rect.y = self.y - offset[1] - self.image.get_height() // 2
-            self.image = pygame.transform.scale(self.frames[self.cur_frame // self.delitel],
-                                                (size, size))
-            self.cur_frame += 1
-        else:
-            self.kill()
 
 
 class BasicEnemy(Character):
@@ -198,7 +174,7 @@ class BasicEnemy(Character):
                 self.hp -= player.damage + player.weapon_now.damage
                 self.show_hp = True
         else:
-            super().update(offset, size_changed)
+            super().update(offset)
 
     def make_step(self):
         if abs(self.pos[0] - player.pos[0]) + abs(self.pos[1] - player.pos[1]) <= self.found_radius:
@@ -206,7 +182,8 @@ class BasicEnemy(Character):
             for cell in self.cells_of_view:
                 if (self.pos[0] + cell[0], self.pos[1] + cell[1]) in card:
                     lb[(self.pos[0] + cell[0], self.pos[1] + cell[1])] = 0
-            need_pos = tuple(player.animated_row[0]) if player.animated_row else player.pos
+            sorted_row = [el for el in player.animated_row if el != "attack"]
+            need_pos = tuple(sorted_row[0]) if sorted_row else player.pos
             result = self.find_path(lb, self.pos, need_pos)
             if result and (path := [cell for cell in result if cell != need_pos]):  # <-- path
                 self.animated_row.extend(path[:self.moves_per_step])
@@ -214,6 +191,7 @@ class BasicEnemy(Character):
                 self.make_random_step()
             if result and len(path) < self.moves_per_step:  # если остались ходы
                 player.hp -= self.damage
+                self.animated_row.append("attack")
                 AnimatedAttack((width // 2 + need_pos[0] * size, height // 2 + need_pos[1] * size))
         else:
             self.make_random_step()
@@ -248,7 +226,8 @@ class BasicEnemy(Character):
         new_nexts = []
         for now in nexts:
             for args in [[-1, 0], [1, 0], [0, -1], [0, 1]]:
-                if check_condition([1, 1, 1], pos=(now[0] + args[0], now[1] + args[1]), flat=lb):
+                if check_condition([1, 1, 1, 0, 1], pos=(now[0] + args[0], now[1] + args[1]),
+                                   flat=lb):
                     lb[now[0] + args[0], now[1] + args[1]] = now
                     new_nexts.append((now[0] + args[0], now[1] + args[1]))
         if new_nexts:
@@ -265,9 +244,55 @@ class FastEnemy(BasicEnemy):
         super().__init__(hp, damage, pos, view, moves_per_step, image)
 
 
+class AnimatedAttack(pygame.sprite.Sprite):
+    def __init__(self, pos):
+        super().__init__(attacks_group)
+        self.frames, self.width, self.height = \
+            cut_sheet(load_image("attack.png"), 5, 1)
+        self.cur_frame = 0
+        self.x, self.y = pos
+        self.checked = False
+        self.image = pygame.transform.scale(self.frames[self.cur_frame], (size, size))
+        self.rect = self.image.get_rect()
+        self.delitel = 5
+
+    def update(self, offset=None, check_attack=False):
+        if check_attack:
+            if not self.checked:
+                enemies.update(check_attack=True,
+                               rect=(self.x - offset[0] - self.image.get_width() // 2,
+                                     self.y - offset[1] - self.image.get_height() // 2, size, size))
+                self.checked = True
+        elif self.cur_frame < len(self.frames) * self.delitel:
+            self.rect.x = self.x - offset[0] - self.image.get_width() // 2
+            self.rect.y = self.y - offset[1] - self.image.get_height() // 2
+            self.image = pygame.transform.scale(self.frames[self.cur_frame // self.delitel],
+                                                (size, size))
+            self.cur_frame += 1
+        else:
+            self.kill()
+
+
+items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
+weapons = [Weapon([[0, -1], [0, -2]], 10, "sword1.png")]
+
+
+def cut_sheet(sheet, columns, rows):
+    rect = pygame.Rect(0, 0, sheet.get_width() // columns,
+                       sheet.get_height() // rows)
+    frames = []
+    for j in range(rows):
+        for i in range(columns):
+            frame_location = (rect.w * i, rect.h * j)
+            frames.append(sheet.subsurface(pygame.Rect(
+                frame_location, rect.size)))
+    return frames, rect.w, rect.h
+
+
 def get_offset():
     global size, focused, drag_offset
-    return [(player.pos[0] + player.average_pos[0]) * size, (player.pos[1] + player.average_pos[1]) * size] if focused else drag_offset
+    return [(player.pos[0] + player.average_pos[0]) * size,
+            (player.pos[1] + player.average_pos[1]) * size] if focused else drag_offset
 
 
 def check_condition(variants, pos=None, flat=None, event=None, key=None):
@@ -282,6 +307,8 @@ def check_condition(variants, pos=None, flat=None, event=None, key=None):
         flag = flag and type(flat[pos]) != tuple
     if len(variants) >= 4 and variants[3]:
         flag = flag and event[key]
+    if len(variants) >= 5 and variants[4]:
+        flag = flag and pos != player.animated_row[0]
     return flag
 
 
@@ -358,7 +385,7 @@ def make_new_level():
         cell = choice(list(flat))
         enemies.add(choices([Enemy(30 * hardness, 1, cell, round(10 * hardness), 1, "Enemy.png"),
                              FastEnemy(20, 1, cell, round(15 * hardness), 3, "FastEnemy.png")],
-                            weights=[10, player.floor])[0])
+                            weights=[6, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -382,7 +409,7 @@ def make_new_level():
         for _ in range(randint(1, round(2.5 - hardness))):
             floor_weapons.append([choice(list(flat2.keys())), choice(weapons)])
 
-    enemies.update(size_changed=size)
+    enemies.update(offset=get_offset())
     make_surface_field()
 
 
@@ -390,8 +417,8 @@ def make_surface_field():
     global floor_field, floor_field_sized, usually_lvl
     """ниже создается surface, где отображены все клетки сразу, которые не будут меняться"""
     list_of_tiles = []
-    for tile in [f"floor{i}.png" for i in range(1, 4)]:
-        floor = load_image(tile)
+    for tile in [f"floor{i}.png" for i in range(1, 5)]:
+        floor = load_image("floors/" + tile)
         floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
         list_of_tiles.append(floor)
 
@@ -399,22 +426,27 @@ def make_surface_field():
         ((field_rect[2] - field_rect[0]) * FOCUSE_RANGE[1], (field_rect[3] -
                                                              field_rect[1]) * FOCUSE_RANGE[1]))
     for cell in card.keys():
-        tile = choice(list_of_tiles)
+        tile = choices(list_of_tiles, weights=[1, 0.05, 0.05, 0.005])[0]
         tile = pygame.transform.rotate(tile, randint(0, 3) * 90)
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
                                 (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
         if cell == exit_ladder and usually_lvl:
-            tile = load_image("exit_ladder.png", 1)
+            tile = load_image("exit_ladder.png")
             tile = pygame.transform.scale(tile, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-            tile.set_colorkey(tile.get_at((0, 0)))
         else:
             continue
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
                                 (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
+    pygame.image.save(floor_field, "picture.png")
 
     floor_field_sized = pygame.transform.scale(floor_field,
                                                ((field_rect[2] - field_rect[0]) * size,
                                                 (field_rect[3] - field_rect[1]) * size))
+
+
+def end():
+    pygame.quit()
+    exit()
 
 
 def draw_main_game():
@@ -425,21 +457,21 @@ def draw_main_game():
         if event.type == pygame.QUIT or (
                 event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
             end()
-        elif event.type == pygame.MOUSEWHEEL and (size > FOCUSE_RANGE[0] or event.y > 0) and \
-                (size < FOCUSE_RANGE[1] or event.y < 0):
-            if size + event.y > FOCUSE_RANGE[1]:
+        elif event.type == pygame.MOUSEWHEEL:
+            last_size = size
+            if size + ceil(event.y * (size / 10)) > FOCUSE_RANGE[1]:
                 size = FOCUSE_RANGE[1]
-            elif size + event.y < FOCUSE_RANGE[0]:
+            elif size + ceil(event.y * (size / 10)) < FOCUSE_RANGE[0]:
                 size = FOCUSE_RANGE[0]
             else:
-                size += event.y
-            drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
-                           round(drag_offset[1] * (size / (size - event.y)))]
+                size += ceil(event.y * (size / 10))
+            drag_offset = [round(drag_offset[0] * (size / last_size)),
+                           round(drag_offset[1] * (size / last_size))]
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
-            enemies.update(size_changed=True)
-            player_group.update(size_changed=True)
+            enemies.update(offset=get_offset())
+            player_group.update(offset=get_offset())
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             drag = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -458,7 +490,8 @@ def draw_main_game():
                     make_new_level()
                 elif player.pos == chest and not chest_looted:
                     state = "choice item"
-                elif result := [weapon for weapon in floor_weapons if weapon[0] == (tuple(player.animated_row[0]) if player.animated_row else player.pos)]:
+                elif result := [weapon for weapon in floor_weapons if weapon[0] == (
+                        tuple(player.animated_row[0]) if player.animated_row else player.pos)]:
                     floor_weapons.remove(result[0])
                     floor_weapons.append([result[0][0], player.weapon_now])
                     player.weapon_now = result[0][1]
@@ -468,13 +501,15 @@ def draw_main_game():
             if time_for_next >= time_rest:
                 can_go_next = True
                 time_for_next = 0
-        if pygame.key.get_pressed() and can_go_next and all([len(enemy.animated_row) == 0 for enemy in enemies]):
+        if pygame.key.get_pressed() and can_go_next and all(
+                [len(enemy.animated_row) == 0 for enemy in enemies]):
             player.pressed_key(pygame.key.get_pressed())
 
     offset = get_offset()
     draw_field(offset)
     draw_player(offset)
     attacks_group.update(offset)
+    attacks_group.update(check_attack=True, offset=offset)
     attacks_group.draw(screen)
 
     pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
@@ -540,7 +575,7 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
                 can_go_next = True
                 time_for_next = 0
                 drag_offset = [0, 0]
-                size = 30
+                size = FOCUSE_RANGE[1]
                 player_group = pygame.sprite.Group()
                 player = Player(10, (0, 0), 5, "player.png")
                 player_group.add(player)
@@ -618,7 +653,7 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
-            enemies.update(size_changed=True)
+            enemies.update(offset=get_offset())
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if end_window_borders[0] + end_window_borders[2] // 2 - exit_button_sizes[0] // 2 <= \
                     event.pos[0] <= end_window_borders[0] + end_window_borders[2] // 2 - \
@@ -626,6 +661,7 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
                     end_window_borders[3] + text_under_end_window <= event.pos[1] <= \
                     end_window_borders[1] + end_window_borders[3] + \
                     text_under_end_window + exit_button_sizes[1]:
+                attacks_group.empty()
                 state = "start window"
             drag = True
         elif event.type == pygame.MOUSEBUTTONUP:
@@ -737,14 +773,12 @@ def draw_chest(offset):
     global chest_looted
     if not chest_looted:
         copy_chest = pygame.transform.scale(chest_im, (size, size))
-        copy_chest.set_colorkey(copy_chest.get_at((0, 0)))
         screen.blit(copy_chest, (width // 2 + chest[0] * size - size // 2 - offset[0],
                                  height // 2 + chest[1] * size - size // 2 - offset[1]))
 
 
 def draw_exit_ladder(offset):
     copy_exit_ladder = pygame.transform.scale(exit_ladder_im, (size, size))
-    copy_exit_ladder.set_colorkey(copy_exit_ladder.get_at((0, 0)))
     screen.blit(copy_exit_ladder, (width // 2 + exit_ladder[0] * size - size // 2 - offset[0],
                                    height // 2 + exit_ladder[1] * size - size // 2 - offset[1]))
 
@@ -753,30 +787,25 @@ def draw_floor_weapons(offset):
     global floor_weapons
     for weapon in floor_weapons:
         image = pygame.transform.scale(weapon[1].image, (size, size))
-        image.set_colorkey(image.get_at((0, 0)))
         screen.blit(image, (width // 2 - image.get_width() // 2 - offset[0] + weapon[0][0] * size,
                             height // 2 - image.get_height() // 2 - offset[1] + weapon[0][1] * size))
 
 
-def end():
-    pygame.quit()
-    exit()
-
-
 pygame.init()
+width, height = (1000, 1000) if input() == "" else (
+    pygame.display.Info().current_w, pygame.display.Info().current_h)
+screen = pygame.display.set_mode((width, height))
+
+hardness = 1
 MYEVENTTYPE = pygame.USEREVENT + 1
 timer_speed = 10
-hardness = 1
-time_rest = 100  # промежуток между ходами в миллисекундах
+time_rest = 250  # промежуток между ходами в миллисекундах
 clock = pygame.time.Clock()
 pygame.time.set_timer(MYEVENTTYPE, timer_speed)
 attacks_group = pygame.sprite.Group()
-sized = width, height = pygame.display.Info().current_w, pygame.display.Info().current_h
-screen = pygame.display.set_mode(sized)
-places = [load_new_place(f"places/place{i}.txt") for i in range(1, 6)]  # структуры можно также хранить в
-# БД или csv/текстовом файле
-chest_im = load_image("chest.png", 1)
-exit_ladder_im = load_image("exit_ladder.png", 1)
+places = [load_new_place(f"places/place{i}.txt") for i in range(1, 6)]
+chest_im = load_image("chest.png")
+exit_ladder_im = load_image("exit_ladder.png")
 
 if __name__ == '__main__':
     state = "start window"
