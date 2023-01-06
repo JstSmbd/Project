@@ -40,9 +40,9 @@ class Item(pygame.sprite.Sprite):
 
 
 class Character(pygame.sprite.Sprite):
-    def __init__(self, hp, pos, damage, image):
+    def __init__(self, hp, pos, damage):
         super().__init__()
-        self.image_orig = load_image(image)
+        self.image_orig = load_image(f"{self.__class__.__name__}.png")
         self.image = pygame.transform.scale(self.image_orig, (size, size))
         self.rect = self.image.get_rect()
         self.hp = hp
@@ -54,38 +54,39 @@ class Character(pygame.sprite.Sprite):
         self.animated_row = []
         self.damage = damage
         self.cells_per_move = 1 if self.__class__.__name__ == "Player" else self.moves_per_step
-        self.animations = [cut_sheet(load_image(f"{self.__class__.__name__.lower()}_walk.png"),
-                                     {"Player": 3, "Enemy": 3, "FastEnemy": 3}[
-                                         self.__class__.__name__], 1)[0],
-                           cut_sheet(load_image(f"{self.__class__.__name__.lower()}_attack.png"),
-                                     {"Player": 3, "Enemy": 3, "FastEnemy": 3}[
-                                         self.__class__.__name__], 1)[0]]
+        im_walk = load_image(f"{self.__class__.__name__.lower()}_walk.png")
+        im_attack = load_image(f"{self.__class__.__name__.lower()}_attack.png")
+        self.animations = [cut_sheet(im_walk, im_walk.get_width() // 30, im_walk.get_height() // 30)[0],
+                           cut_sheet(im_attack, im_attack.get_width() // 30, im_attack.get_height() // 30)[0]]
         self.frame = 0
 
     def update(self, offset=None):
         if self.animated_row:
             if self.animated_row[0] == "attack":
-                if len(self.animated_row) > 1 or self.frame // (FPS // 6) >= len(self.animations[1]):
+                if len(self.animated_row) > 1 or round(len(self.animations[1]) * (self.frame / (FPS * time_rest * 0.001))) >= len(self.animations[1]):
                     self.frame = 0
                     self.animated_row = self.animated_row[1:]
                 else:
                     self.image = pygame.transform.scale(self.animations[1]
-                                                        [self.frame // (FPS // 6)], (size, size))
+                                                        [round(len(self.animations[1]) * (self.frame / (FPS * time_rest * 0.001)))], (size, size))
             else:
                 self.image = pygame.transform.scale(self.animations[0]
-                                                    [self.frame // (FPS // 12) %
-                                                     len(self.animations[0])], (size, size))
+                                                    [round((len(self.animations[0]) - 1) *
+                                                           max([abs(el) for el in self.average_pos]))], (size, size))
                 next_pos = [self.animated_row[0][0] - self.pos[0],
                             self.animated_row[0][1] - self.pos[1]]
                 self.average_pos = [self.average_pos[0] + next_pos[0] / (
                         FPS / (self.cells_per_move / (time_rest * 0.001))),
                                     self.average_pos[1] + next_pos[1] / (
                                             FPS / (self.cells_per_move / (time_rest * 0.001)))]
+                # FPS / (self.cells_per_move / (time_rest * 0.001)) - сколько кадров нужно потратить,
+                # чтобы пройти 1 клетку
                 if not (-1 < self.average_pos[0] < 1 and -1 < self.average_pos[1] < 1
                         and self.average_pos != [0, 0]):
                     self.pos = tuple(self.animated_row[0])
                     self.animated_row = self.animated_row[1:]
                     self.average_pos = [0, 0]
+                    self.frame = -1
             self.frame += 1
         else:
             self.frame = 0
@@ -97,8 +98,8 @@ class Character(pygame.sprite.Sprite):
 
 
 class Player(Character):
-    def __init__(self, max_hp, pos, damage, image):
-        super().__init__(max_hp, pos, damage, image)
+    def __init__(self, max_hp, pos, damage):
+        super().__init__(max_hp, pos, damage)
         self.floor = 1
         self.moves_per_step = 1
         self.moves_last = self.moves_per_step
@@ -153,9 +154,9 @@ class Player(Character):
 
 
 class BasicEnemy(Character):
-    def __init__(self, hp, damage, pos, view, moves_per_step, image):
+    def __init__(self, hp, damage, pos, view, moves_per_step):
         self.moves_per_step = moves_per_step
-        super().__init__(hp, pos, damage, image)
+        super().__init__(hp, pos, damage)
         self.cells_of_view = sphere_of_cells(view)
         self.found_radius = view // 2
         self.show_hp = False
@@ -190,11 +191,14 @@ class BasicEnemy(Character):
             elif result is None:  # если нельзя пройти до игрока
                 self.make_random_step()
             if result and len(path) < self.moves_per_step:  # если остались ходы
-                player.hp -= self.damage
-                self.animated_row.append("attack")
-                AnimatedAttack((width // 2 + need_pos[0] * size, height // 2 + need_pos[1] * size))
+                self.attack_player(need_pos)
         else:
             self.make_random_step()
+
+    def attack_player(self, need_pos):
+        player.hp -= self.damage
+        self.animated_row.append("attack")
+        AnimatedAttack((width // 2 + need_pos[0] * size, height // 2 + need_pos[1] * size))
 
     def make_random_step(self):
         pos_now = self.pos
@@ -235,13 +239,26 @@ class BasicEnemy(Character):
 
 
 class Enemy(BasicEnemy):
-    def __init__(self, hp, damage, pos, view, moves_per_step, image):
-        super().__init__(hp, damage, pos, view, moves_per_step, image)
+    def __init__(self, hp, damage, pos, view, moves_per_step):
+        super().__init__(hp, damage, pos, view, moves_per_step)
 
 
 class FastEnemy(BasicEnemy):
-    def __init__(self, hp, damage, pos, view, moves_per_step, image):
-        super().__init__(hp, damage, pos, view, moves_per_step, image)
+    def __init__(self, hp, damage, pos, view, moves_per_step):
+        super().__init__(hp, damage, pos, view, moves_per_step)
+
+
+class CubeEnemy(BasicEnemy):
+    def __init__(self, *args):
+        super().__init__(*args)
+
+    def attack_player(self, need_pos):
+        self.animated_row.append("attack")
+
+
+class StrongEnemy(BasicEnemy):
+    def __init__(self, *args):
+        super().__init__(*args)
 
 
 class AnimatedAttack(pygame.sprite.Sprite):
@@ -383,9 +400,14 @@ def make_new_level():
     numb_enemies = int(structures * uniform(ENEMIES_MULTI_RANGE[0], ENEMIES_MULTI_RANGE[1]))
     for i in range(numb_enemies):
         cell = choice(list(flat))
-        enemies.add(choices([Enemy(30 * hardness, 1, cell, round(10 * hardness), 1, "Enemy.png"),
-                             FastEnemy(20, 1, cell, round(15 * hardness), 3, "FastEnemy.png")],
-                            weights=[6, player.floor])[0])
+        if player.floor < 4:
+            enemies.add(choices([Enemy(round(30 * hardness), 1, cell, round(10 * hardness), 1),
+                                 FastEnemy(round(20 * hardness), 1, cell, round(15 * hardness), round(3 * hardness))],
+                                weights=[6, player.floor])[0])
+        else:
+            enemies.add(choices([CubeEnemy(round(70 * hardness), 1, cell, round(10 * hardness), 1),
+                                 StrongEnemy(10, 3, cell, round(15 * hardness), 3)],
+                                weights=[4, player.floor])[0])
         flat.pop(cell)
 
     flat2.pop((0, 0))
@@ -417,10 +439,19 @@ def make_surface_field():
     global floor_field, floor_field_sized, usually_lvl
     """ниже создается surface, где отображены все клетки сразу, которые не будут меняться"""
     list_of_tiles = []
-    for tile in [f"floor{i}.png" for i in range(1, 5)]:
-        floor = load_image("floors/" + tile)
-        floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
-        list_of_tiles.append(floor)
+    if player.floor < 4:
+        stage = "first"
+    else:
+        stage = "second"
+    try:
+        i = 0
+        while True:
+            i += 1
+            floor = load_image(f"floors/{stage}/floor{i}.png")
+            floor = pygame.transform.scale(floor, (FOCUSE_RANGE[1], FOCUSE_RANGE[1]))
+            list_of_tiles.append(floor)
+    except FileNotFoundError:
+        pass
 
     floor_field = pygame.Surface(
         ((field_rect[2] - field_rect[0]) * FOCUSE_RANGE[1], (field_rect[3] -
@@ -451,7 +482,7 @@ def end():
 
 def draw_main_game():
     global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, \
-        state, chest_looted, usually_lvl, floor_weapons
+        state, chest_looted, usually_lvl, floor_weapons, timer
     screen.fill('black')
     for event in pygame.event.get():
         if event.type == pygame.QUIT or (
@@ -553,7 +584,8 @@ def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
 
 
 def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
-    global state, player, drag, can_go_next, time_for_next, drag_offset, size, player_group, hardness
+    global state, player, drag, can_go_next, time_for_next, drag_offset, size, player_group, \
+        hardness, timer
 
     drag_hd = False
 
@@ -577,7 +609,7 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
                 drag_offset = [0, 0]
                 size = FOCUSE_RANGE[1]
                 player_group = pygame.sprite.Group()
-                player = Player(10, (0, 0), 5, "player.png")
+                player = Player(10, (0, 0), 5)
                 player_group.add(player)
                 make_new_level()
                 return
