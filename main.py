@@ -502,8 +502,6 @@ def make_surface_field():
             continue
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
                                 (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
-    pygame.image.save(floor_field, "picture.png")
-
     floor_field_sized = pygame.transform.scale(floor_field,
                                                ((field_rect[2] - field_rect[0]) * size,
                                                 (field_rect[3] - field_rect[1]) * size))
