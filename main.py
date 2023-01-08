@@ -1,13 +1,12 @@
 import pygame
 
-from PIL import Image
-from random import choices, choice, randint, uniform
+from random import choices, choice, randint, uniform, shuffle
 from math import ceil
 
-STRUCTURES_RANGE = [10, 50]  # from: _ to: _
-EXTENDED_RANGE = [-5, 5]  # from: _ to: _
+STRUCTURES_RANGE = [50, 100]  # from: _ to: _
+EXTENDED_RANGE = [1, 5]  # from: _ to: _
 ENEMIES_MULTI_RANGE = [0.1, 0.3]  # from: _ to: _
-FOCUSE_RANGE = [5, 100]
+FOCUSE_RANGE = [5, 30]  # from: _ to: _
 start = {(0, 0): 1, (1, 0): 1, (2, 0): 1, (1, 1): 1, (0, 1): 1, (0, 2): 1, (-1, 1): 1, (-1, 0): 1,
          (-2, 0): 1, (-1, -1): 1, (0, -1): 1, (0, -2): 1, (1, -1): 1}
 FPS = 60
@@ -42,37 +41,43 @@ class Item(pygame.sprite.Sprite):
 class Character(pygame.sprite.Sprite):
     def __init__(self, hp, pos, damage):
         super().__init__()
-        self.image_orig = load_image(f"{self.__class__.__name__}.png")
-        self.image = pygame.transform.scale(self.image_orig, (size, size))
-        self.rect = self.image.get_rect()
+        im = load_image(f"{self.__class__.__name__.lower()}.png")
+        self.image_orig = cut_sheet(im, im.get_width() // 30, im.get_height() // 30)[0]
         self.hp = hp
         self.max_hp = hp
         self.pos = pos
-        self.rect.x = 0
-        self.rect.y = 0
         self.average_pos = [0, 0]
         self.animated_row = []
         self.damage = damage
         self.cells_per_move = 1 if self.__class__.__name__ == "Player" else self.moves_per_step
         im_walk = load_image(f"{self.__class__.__name__.lower()}_walk.png")
         im_attack = load_image(f"{self.__class__.__name__.lower()}_attack.png")
-        self.animations = [cut_sheet(im_walk, im_walk.get_width() // 30, im_walk.get_height() // 30)[0],
-                           cut_sheet(im_attack, im_attack.get_width() // 30, im_attack.get_height() // 30)[0]]
+        self.animations = [
+            cut_sheet(im_walk, im_walk.get_width() // 30, im_walk.get_height() // 30)[0],
+            cut_sheet(im_attack, im_attack.get_width() // 30, im_attack.get_height() // 30)[0]]
         self.frame = 0
+        self.stayed_frame = 0
 
     def update(self, offset=None):
         if self.animated_row:
+            self.stayed_frame = 0
             if self.animated_row[0] == "attack":
-                if len(self.animated_row) > 1 or round(len(self.animations[1]) * (self.frame / (FPS * time_rest * 0.001))) >= len(self.animations[1]):
+                if len(self.animated_row) > 1 or round(
+                        len(self.animations[1]) * (self.frame / (FPS * time_rest * 0.001))) >= \
+                        len(self.animations[1]):
                     self.frame = 0
                     self.animated_row = self.animated_row[1:]
                 else:
-                    self.image = pygame.transform.scale(self.animations[1]
-                                                        [round(len(self.animations[1]) * (self.frame / (FPS * time_rest * 0.001)))], (size, size))
+                    self.image = pygame. \
+                        transform.scale(self.animations[1][round(len(self.animations[1]) *
+                                                                 (self.frame /
+                                                                  (FPS * time_rest * 0.001)))],
+                                        (size, size))
             else:
                 self.image = pygame.transform.scale(self.animations[0]
                                                     [round((len(self.animations[0]) - 1) *
-                                                           max([abs(el) for el in self.average_pos]))], (size, size))
+                                                           max([abs(el) for el in
+                                                                self.average_pos]))], (size, size))
                 next_pos = [self.animated_row[0][0] - self.pos[0],
                             self.animated_row[0][1] - self.pos[1]]
                 self.average_pos = [self.average_pos[0] + next_pos[0] / (
@@ -90,11 +95,15 @@ class Character(pygame.sprite.Sprite):
             self.frame += 1
         else:
             self.frame = 0
-            self.image = pygame.transform.scale(self.image_orig, (size, size))
+            self.image = pygame.transform.scale(self.image_orig[round(self.stayed_frame //
+                                                                      (FPS / 2.5) %
+                                                                      len(self.image_orig))],
+                                                (size, size))
+            self.stayed_frame += 1
         self.rect = self.image.get_rect()
         self.rect.x, self.rect.y = (
             width // 2 - size // 2 - offset[0] + (self.pos[0] + self.average_pos[0]) * size,
-            height // 2 - size // 2 - offset[1] + (self.pos[1]  + self.average_pos[1]) * size)
+            height // 2 - size // 2 - offset[1] + (self.pos[1] + self.average_pos[1]) * size)
 
 
 class Player(Character):
@@ -110,8 +119,8 @@ class Player(Character):
     def pressed_key(self, event):
         if event[pygame.K_w] or event[pygame.K_s] or event[pygame.K_a] or event[pygame.K_d]:
             self.move(event)
-        elif event[pygame.K_UP] or event[pygame.K_DOWN] or event[pygame.K_LEFT] or event[
-            pygame.K_RIGHT]:
+        elif event[pygame.K_UP] or event[pygame.K_DOWN] or event[pygame.K_LEFT] \
+                or event[pygame.K_RIGHT]:
             self.attack(event)
         if self.hp <= 0:
             global state, focused, drag_offset
@@ -120,12 +129,17 @@ class Player(Character):
             drag_offset = [self.pos[0] * size, self.pos[1] * size]
 
     def move(self, event):
-        for args in [[[0, -1], pygame.K_w], [[0, 1], pygame.K_s],
-                     [[-1, 0], pygame.K_a], [[1, 0], pygame.K_d]]:
+        list0 = [[[0, -1], pygame.K_w], [[0, 1], pygame.K_s],
+                 [[-1, 0], pygame.K_a], [[1, 0], pygame.K_d]]
+        shuffle(list0)
+        for args in list0:
             if check_condition([1, 1, 0, 1], pos=(self.pos[0] + args[0][0],
                                                   self.pos[1] + args[0][1]),
                                event=event, key=args[1]) and self.average_pos == [0, 0]:
                 self.animated_row.append([self.pos[0] + args[0][0], self.pos[1] + args[0][1]])
+                sound = choice(sounds["player walk"])
+                sound.set_volume(volume)
+                sound.play()
                 self.moves_last -= 1
                 global can_go_next
                 can_go_next = False
@@ -135,14 +149,20 @@ class Player(Character):
             enemies.update(your_move=True)
 
     def attack(self, event):
-        for args in [[self.weapon_now.place, pygame.K_UP],
-                     [rotate(self.weapon_now.place, 2), pygame.K_DOWN],
-                     [rotate(self.weapon_now.place, 1), pygame.K_LEFT],
-                     [rotate(self.weapon_now.place, 3), pygame.K_RIGHT]]:
+        list0 = [[self.weapon_now.place, pygame.K_UP],
+                 [rotate(self.weapon_now.place, 2), pygame.K_DOWN],
+                 [rotate(self.weapon_now.place, 1), pygame.K_LEFT],
+                 [rotate(self.weapon_now.place, 3), pygame.K_RIGHT]]
+        shuffle(list0)
+        for args in list0:
             if event[args[1]]:
                 for arg in args[0]:
                     AnimatedAttack((width // 2 + (self.pos[0] + arg[0]) * size,
                                     height // 2 + (self.pos[1] + arg[1]) * size))
+                attacks_group.update(offset=get_offset())
+                sound = choice(sounds["player attack"])
+                sound.set_volume(volume)
+                sound.play()
                 self.animated_row.append("attack")
                 global can_go_next
                 can_go_next = False
@@ -166,14 +186,18 @@ class BasicEnemy(Character):
             pygame.draw.rect(screen, "black", (self.rect.x, self.rect.y, self.rect.width, 1))
             pygame.draw.rect(screen, "red", (self.rect.x, self.rect.y,
                                              round(self.hp / self.max_hp * self.rect.width), 1))
-        if self.hp <= 0:
-            self.kill()
         if your_move:
             self.make_step()
         elif check_attack:
             if self.rect.colliderect(rect):
                 self.hp -= player.damage + player.weapon_now.damage
+                sound = choice(sounds["hit enemy"])
+                sound.set_volume(volume)
+                sound.play()
                 self.show_hp = True
+                if self.hp <= 0:
+                    self.kill()
+                    return
         else:
             super().update(offset)
 
@@ -199,6 +223,9 @@ class BasicEnemy(Character):
         player.hp -= self.damage
         self.animated_row.append("attack")
         AnimatedAttack((width // 2 + need_pos[0] * size, height // 2 + need_pos[1] * size))
+        sound = choice(sounds["hit player"])
+        sound.set_volume(volume)
+        sound.play()
 
     def make_random_step(self):
         pos_now = self.pos
@@ -268,18 +295,17 @@ class AnimatedAttack(pygame.sprite.Sprite):
             cut_sheet(load_image("attack.png"), 5, 1)
         self.cur_frame = 0
         self.x, self.y = pos
-        self.checked = False
         self.image = pygame.transform.scale(self.frames[self.cur_frame], (size, size))
         self.rect = self.image.get_rect()
         self.delitel = 5
+        self.checked = False
 
-    def update(self, offset=None, check_attack=False):
-        if check_attack:
-            if not self.checked:
-                enemies.update(check_attack=True,
-                               rect=(self.x - offset[0] - self.image.get_width() // 2,
-                                     self.y - offset[1] - self.image.get_height() // 2, size, size))
-                self.checked = True
+    def update(self, offset=None):
+        if not self.checked:
+            enemies.update(check_attack=True,
+                           rect=(self.x - offset[0] - self.image.get_width() // 2,
+                                 self.y - offset[1] - self.image.get_height() // 2, size, size))
+            self.checked = True
         elif self.cur_frame < len(self.frames) * self.delitel:
             self.rect.x = self.x - offset[0] - self.image.get_width() // 2
             self.rect.y = self.y - offset[1] - self.image.get_height() // 2
@@ -319,7 +345,8 @@ def check_condition(variants, pos=None, flat=None, event=None, key=None):
     if len(variants) >= 1 and variants[0]:
         flag = flag and pos in flat
     if len(variants) >= 2 and variants[1]:
-        flag = flag and all([pos != en.pos for en in enemies])
+        flag = flag and all([pos !=
+                             (en.animated_row[0] if en.animated_row else en.pos) for en in enemies])
     if len(variants) >= 3 and variants[2]:
         flag = flag and type(flat[pos]) != tuple
     if len(variants) >= 4 and variants[3]:
@@ -362,7 +389,8 @@ def sphere_of_cells(diametr):
 
 
 def make_new_level():
-    global card, exit_ladder, enemies, focused, chest, field_rect, drag_offset, chest_looted, usually_lvl, floor_weapons
+    global card, exit_ladder, enemies, focused, chest, field_rect, \
+        drag_offset, chest_looted, usually_lvl, floor_weapons
     usually_lvl = player.floor <= 1 or randint(0, round(5 * (2 - hardness))) != 0
     structures = int(randint(STRUCTURES_RANGE[0], STRUCTURES_RANGE[1]) * hardness)
     extended = uniform(EXTENDED_RANGE[0], EXTENDED_RANGE[1]) if usually_lvl else -10
@@ -401,12 +429,17 @@ def make_new_level():
     for i in range(numb_enemies):
         cell = choice(list(flat))
         if player.floor < 4:
-            enemies.add(choices([Enemy(round(30 * hardness), 1, cell, round(10 * hardness), 1),
-                                 FastEnemy(round(20 * hardness), 1, cell, round(15 * hardness), round(3 * hardness))],
+            enemies.add(choices([Enemy(round((30 + (player.floor - 1) * 2) * hardness), 1, cell,
+                                       round(10 * hardness), 1),
+                                 FastEnemy(round((20 + (player.floor - 1) * 1.5) * hardness),
+                                           1, cell, round(15 * hardness),
+                                           round(3 * hardness))],
                                 weights=[6, player.floor])[0])
         else:
-            enemies.add(choices([CubeEnemy(round(70 * hardness), 1, cell, round(10 * hardness), 1),
-                                 StrongEnemy(10, 3, cell, round(15 * hardness), 3)],
+            enemies.add(choices([CubeEnemy(round((70 + (player.floor - 1) * 5) * hardness), 1, cell,
+                                           round(10 * hardness), 1),
+                                 StrongEnemy(10, round((3 + (player.floor - 1) * 0.2) * hardness),
+                                             cell, round(15 * hardness), 3)],
                                 weights=[4, player.floor])[0])
         flat.pop(cell)
 
@@ -432,6 +465,7 @@ def make_new_level():
             floor_weapons.append([choice(list(flat2.keys())), choice(weapons)])
 
     enemies.update(offset=get_offset())
+    attacks_group.empty()
     make_surface_field()
 
 
@@ -452,12 +486,12 @@ def make_surface_field():
             list_of_tiles.append(floor)
     except FileNotFoundError:
         pass
-
     floor_field = pygame.Surface(
         ((field_rect[2] - field_rect[0]) * FOCUSE_RANGE[1], (field_rect[3] -
                                                              field_rect[1]) * FOCUSE_RANGE[1]))
     for cell in card.keys():
-        tile = choices(list_of_tiles, weights=[1, 0.05, 0.05, 0.005])[0]
+        tile = choices(list_of_tiles, weights={"first": [1, 0.05, 0.05, 0.005],
+                                               "second": [1, 0.05, 0.05, 0.005]}[stage])[0]
         tile = pygame.transform.rotate(tile, randint(0, 3) * 90)
         floor_field.blit(tile, ((cell[0] - field_rect[0]) * FOCUSE_RANGE[1],
                                 (cell[1] - field_rect[1]) * FOCUSE_RANGE[1]))
@@ -482,12 +516,18 @@ def end():
 
 def draw_main_game():
     global drag_offset, drag, focused, can_go_next, time_for_next, floor_field_sized, size, \
-        state, chest_looted, usually_lvl, floor_weapons, timer
-    screen.fill('black')
+        state, chest_looted, usually_lvl, floor_weapons
+
     for event in pygame.event.get():
-        if event.type == pygame.QUIT or (
-                event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+        if event.type == pygame.QUIT:
             end()
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            sf = pygame.Surface((width, height))
+            sf.set_alpha(150)
+            sf.fill("black")
+            sc = screen.copy()
+            sc.blit(sf, (0, 0))
+            draw_menu(sc)
         elif event.type == pygame.MOUSEWHEEL:
             last_size = size
             if size + ceil(event.y * (size / 10)) > FOCUSE_RANGE[1]:
@@ -501,15 +541,12 @@ def draw_main_game():
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
-            enemies.update(offset=get_offset())
-            player_group.update(offset=get_offset())
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             drag = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             drag = False
         elif event.type == pygame.MOUSEMOTION and drag:
             drag_offset = [drag_offset[i] - event.rel[i] for i in range(2)]
-            focused = False
             focused = False
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_f:
@@ -536,11 +573,12 @@ def draw_main_game():
                 [len(enemy.animated_row) == 0 for enemy in enemies]):
             player.pressed_key(pygame.key.get_pressed())
 
+    screen.fill('black')
+
     offset = get_offset()
     draw_field(offset)
     draw_player(offset)
     attacks_group.update(offset)
-    attacks_group.update(check_attack=True, offset=offset)
     attacks_group.draw(screen)
 
     pygame.draw.arc(screen, (255, 255, 0), (50, height - 100, 50, 50), 90 / 57.2958,
@@ -551,7 +589,8 @@ def draw_main_game():
                     90 / 57.2958, 5)  # время до следующего хода
 
     text = pygame.font.Font(None, 50).render(str(player.moves_last), True, (255, 255, 255))
-    screen.blit(text, (50 + 25 - text.get_width() // 2, height - 100 + 25 - text.get_height() // 2))
+    screen.blit(text, (
+        50 + 25 - text.get_width() // 2, height - 100 + 25 - text.get_height() // 2))
 
     hp_bar_height = 200
     hp_bar_line_width = 2
@@ -562,6 +601,7 @@ def draw_main_game():
             (12, 12 + i * ((hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) /
                            player.max_hp + hp_bar_line_width), 26,
              (hp_bar_height - hp_bar_line_width * (player.max_hp + 1)) / player.max_hp))
+
     pygame.display.flip()
     clock.tick(FPS)
 
@@ -583,7 +623,8 @@ def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
     pygame.display.flip()
 
 
-def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
+def draw_start_window(start_window_sizes=[800, 100],
+                      exit_button_sizes=[200, 50], hardness_under=100):
     global state, player, drag, can_go_next, time_for_next, drag_offset, size, player_group, \
         hardness, timer
 
@@ -597,11 +638,15 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
         screen.fill("black")
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (
-                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE) or \
+                    (event.type == pygame.MOUSEBUTTONDOWN and pygame.Rect(
+                        width - 50 - exit_button_sizes[0],
+                        height - 50 - exit_button_sizes[1],
+                        exit_button_sizes[0], exit_button_sizes[1]).collidepoint(event.pos)):
                 end()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
-                    and start_window_borders[0] <= event.pos[0] <= start_window_borders[2] \
-                    and start_window_borders[1] <= event.pos[1] <= start_window_borders[3]:
+                    and pygame.Rect(*start_window_borders[:2], *start_window_sizes). \
+                    collidepoint(event.pos):
                 state = "main"
                 drag = False
                 can_go_next = True
@@ -613,22 +658,21 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
                 player_group.add(player)
                 make_new_level()
                 return
-            elif event.type == pygame.MOUSEBUTTONDOWN and start_window_borders[0] <= \
-                    event.pos[0] <= start_window_borders[2] and start_window_borders[3] + \
-                    hardness_under - 10 <= event.pos[1] <= start_window_borders[3] + \
-                    hardness_under + 10:
+            elif event.type == pygame.MOUSEBUTTONDOWN and \
+                    pygame.Rect(start_window_borders[0],
+                                start_window_borders[3] + hardness_under - 10,
+                                start_window_sizes[0], 22).collidepoint(event.pos):
                 drag_hd = True
                 hardness = (event.pos[0] - start_window_borders[0]) / start_window_sizes[0] + 0.5
             elif event.type == pygame.MOUSEBUTTONUP:
                 drag_hd = False
             elif event.type == pygame.MOUSEMOTION and drag_hd:
-                next_hardness = \
+                hardness = \
                     (event.pos[0] - start_window_borders[0]) / start_window_sizes[0] + 0.5
-                if next_hardness > 1.5:
-                    next_hardness = 1.5
-                elif next_hardness < 0.5:
-                    next_hardness = 0.5
-                hardness = next_hardness
+                if hardness > 1.5:
+                    hardness = 1.5
+                elif hardness < 0.5:
+                    hardness = 0.5
 
         pygame.draw.rect(screen, "green", (start_window_borders[0], start_window_borders[1],
                                            start_window_sizes[0], start_window_sizes[1]), 1)
@@ -660,6 +704,21 @@ def draw_start_window(start_window_sizes=[800, 100], hardness_under=100):
         screen.blit(text, (start_window_borders[2] - text.get_width() // 2, start_window_borders[3] +
                            hardness_under + text.get_height() // 2))
 
+        text = pygame.font.Font(None, 70).render(str(round(hardness, 2)), True, "white")
+        screen.blit(text, (start_window_borders[0] + (start_window_sizes[0] - text.get_width()) // 2,
+                           start_window_borders[3] + hardness_under - text.get_height() // 2 -
+                           hardness_under // 2))
+
+        pygame.draw.rect(screen, (255, 255, 255), (width - 50 - exit_button_sizes[0],
+                                                   height - 50 - exit_button_sizes[1],
+                                                   exit_button_sizes[0], exit_button_sizes[1]), 1)
+        pygame.draw.rect(screen, (0, 0, 0), (width - 50 - exit_button_sizes[0] + 1,
+                                             height - 50 - exit_button_sizes[1] + 1,
+                                             exit_button_sizes[0] - 2, exit_button_sizes[1] - 2))
+        text = pygame.font.Font(None, 50).render("EXIT", True, (255, 255, 255))
+        screen.blit(text, (width - 50 - (exit_button_sizes[0] + text.get_width()) // 2,
+                           height - 50 - (exit_button_sizes[1] + text.get_height()) // 2))
+
         pygame.display.flip()
 
 
@@ -670,29 +729,29 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
                           end_window_sizes[1]]
     screen.fill("black")
     for event in pygame.event.get():
-        if event.type == pygame.QUIT or (
-                event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+        if event.type == pygame.QUIT:
             end()
-        elif event.type == pygame.MOUSEWHEEL and (size != FOCUSE_RANGE[0] or event.y > 0) and \
-                (size != FOCUSE_RANGE[1] or event.y < 0):
-            if size + event.y > FOCUSE_RANGE[1]:
-                event.y = FOCUSE_RANGE[1]
-            elif size + event.y < FOCUSE_RANGE[0]:
-                event.y = FOCUSE_RANGE[0]
-            size += event.y
-            drag_offset = [round(drag_offset[0] * (size / (size - event.y))),
-                           round(drag_offset[1] * (size / (size - event.y)))]
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            attacks_group.empty()
+            state = "start window"
+        elif event.type == pygame.MOUSEWHEEL:
+            last_size = size
+            if size + ceil(event.y * (size / 10)) > FOCUSE_RANGE[1]:
+                size = FOCUSE_RANGE[1]
+            elif size + ceil(event.y * (size / 10)) < FOCUSE_RANGE[0]:
+                size = FOCUSE_RANGE[0]
+            else:
+                size += ceil(event.y * (size / 10))
+            drag_offset = [round(drag_offset[0] * (size / last_size)),
+                           round(drag_offset[1] * (size / last_size))]
             floor_field_sized = pygame.transform.scale(floor_field,
                                                        ((field_rect[2] - field_rect[0]) * size,
                                                         (field_rect[3] - field_rect[1]) * size))
             enemies.update(offset=get_offset())
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if end_window_borders[0] + end_window_borders[2] // 2 - exit_button_sizes[0] // 2 <= \
-                    event.pos[0] <= end_window_borders[0] + end_window_borders[2] // 2 - \
-                    exit_button_sizes[0] // 2 + exit_button_sizes[0] and end_window_borders[1] + \
-                    end_window_borders[3] + text_under_end_window <= event.pos[1] <= \
-                    end_window_borders[1] + end_window_borders[3] + \
-                    text_under_end_window + exit_button_sizes[1]:
+            if pygame.Rect(end_window_borders[0] + (end_window_borders[2] - exit_button_sizes[0]),
+                           end_window_borders[1] + end_window_borders[3] + text_under_end_window,
+                           exit_button_sizes[0], exit_button_sizes[1]).collidepoint(event.pos):
                 attacks_group.empty()
                 state = "start window"
             drag = True
@@ -734,10 +793,11 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
                                exit_button_sizes[1] - text.get_height()) // 2,
                        exit_button_sizes[0], exit_button_sizes[1]))
     pygame.display.flip()
+    clock.tick(FPS)
 
 
-def draw_choice_item(item_size=200):
-    global player, size, focused, drag_offset, state, chest_looted
+def draw_choice_item(item_size=200, menu_sizes=[[200, 500], [2, 50], [200, 50]]):
+    global player, size, focused, drag_offset, state, chest_looted, menu_mode
     offset = get_offset()
     copy_items = items.copy()
     items_for_choice = []
@@ -751,20 +811,18 @@ def draw_choice_item(item_size=200):
                                [width // 4 * 2 - item_size // 2, height // 4 * 3 - item_size // 2],
                                [width // 4 * 3 - item_size // 2, height // 4 - item_size // 2]]):
         Item(items_for_choice[i][0], items_for_choice[i][1], coord, items_group)
-
     while state == "choice item":
         screen.fill("black")
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or (
-                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+            if event.type == pygame.QUIT:
                 end()
-            elif event.type == pygame.MOUSEBUTTONDOWN:
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if result := [item.update(event.pos) for item in items_group
                               if item.update(event.pos) is not None]:
                     use_item(result[0])
                     chest_looted = True
                     state = "main"
-                    break
+                    return
         draw_field(offset)
         draw_chest(offset)
         draw_player(offset)
@@ -823,15 +881,94 @@ def draw_floor_weapons(offset):
                             height // 2 - image.get_height() // 2 - offset[1] + weapon[0][1] * size))
 
 
+def draw_menu(sc, menu_sizes=[[200, 500], [2, 50], [200, 50]]):
+    global volume, state
+    drag_hd = False
+    while True:
+        screen.fill("black")
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                end()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if pygame.Rect(width - 25 - (menu_sizes[0][0] + menu_sizes[1][0]) // 2,
+                               20 + menu_sizes[1][1], 12,
+                               menu_sizes[0][1] - menu_sizes[1][1] * 2).collidepoint(event.pos):
+                    drag_hd = True
+                    volume = 1 - (event.pos[1] - 20 - menu_sizes[1][1]) / (
+                            menu_sizes[0][1] - menu_sizes[1][1] * 2)
+                elif pygame.Rect(width - 20 - menu_sizes[2][0],
+                                 40 + menu_sizes[0][1],
+                                 menu_sizes[2][0],
+                                 menu_sizes[2][1]).collidepoint(event.pos):
+                    state = "start window"
+                    return
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                drag_hd = False
+            elif event.type == pygame.MOUSEMOTION and drag_hd:
+                volume = 1 - (event.pos[1] - 20 - menu_sizes[1][1]) / (
+                        menu_sizes[0][1] - menu_sizes[1][1] * 2)
+                if volume > 1:
+                    volume = 1
+                elif volume < 0:
+                    volume = 0
+        screen.blit(sc, (0, 0))
+        pygame.draw.rect(screen, "white", (width - menu_sizes[0][0] - 20, 20,
+                                           menu_sizes[0][0], menu_sizes[0][1]), 1)
+        pygame.draw.rect(screen, "black", (width - menu_sizes[0][0] - 19, 21,
+                                           menu_sizes[0][0] - 2, menu_sizes[0][1] - 2))
+        pygame.draw.rect(screen, "white", (width - 20 -
+                                           (menu_sizes[0][0] + menu_sizes[1][0]) // 2,
+                                           20 + menu_sizes[1][1], menu_sizes[1][0],
+                                           menu_sizes[0][1] - menu_sizes[1][1] * 2))
+        text = pygame.font.Font(None, 30).render(f"{round(volume * 100)}%", True,
+                                                 (255, 255, 255))
+        screen.blit(text, (width - (menu_sizes[0][0] + text.get_width()) // 2 - 20,
+                           20 + menu_sizes[0][1] - (menu_sizes[1][1] + text.get_height()) // 2))
+        pygame.draw.rect(screen, "white", (width - 25 -
+                                           (menu_sizes[0][0] + menu_sizes[1][0]) // 2,
+                                           20 + menu_sizes[1][1] + (1 - volume) *
+                                           (menu_sizes[0][1] - menu_sizes[1][1] * 2), 12, 2))
+
+        pygame.draw.rect(screen, "white", (width - 20 - menu_sizes[2][0],
+                                           40 + menu_sizes[0][1],
+                                           menu_sizes[2][0], menu_sizes[2][1]), 1)
+        pygame.draw.rect(screen, "black", (width - 19 - menu_sizes[2][0],
+                                           41 + menu_sizes[0][1],
+                                           menu_sizes[2][0] - 2, menu_sizes[2][1] - 2))
+        text = pygame.font.Font(None, 50).render(f"EXIT", True,
+                                                 (255, 255, 255))
+        screen.blit(text, (width - 20 - (menu_sizes[2][0] + text.get_width()) // 2,
+                           40 + menu_sizes[0][1] + (menu_sizes[2][1] - text.get_height()) // 2))
+
+        pygame.display.flip()
+
+
+def find_sounds(name):
+    sounds = []
+    try:
+        i = 0
+        while True:
+            i += 1
+            sounds.append(pygame.mixer.Sound(f"data/sounds/{name}{i}.wav"))
+    except FileNotFoundError:
+        return sounds
+
+
 pygame.init()
 width, height = (1000, 1000) if input() == "" else (
     pygame.display.Info().current_w, pygame.display.Info().current_h)
 screen = pygame.display.set_mode((width, height))
 
-hardness = 1
+sounds = {"player attack": find_sounds("player attack"), "hit player": find_sounds("hit player"),
+          "hit enemy": find_sounds("hit enemy"), "player walk": find_sounds("player walk")}
+
+hardness = 1.0
 MYEVENTTYPE = pygame.USEREVENT + 1
 timer_speed = 10
-time_rest = 250  # промежуток между ходами в миллисекундах
+volume = 0.1
+time_rest = 100  # промежуток между ходами в миллисекундах
 clock = pygame.time.Clock()
 pygame.time.set_timer(MYEVENTTYPE, timer_speed)
 attacks_group = pygame.sprite.Group()
