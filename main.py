@@ -1,4 +1,5 @@
 import pygame
+import sys
 
 from glob import glob
 from random import choices, choice, randint, uniform, shuffle
@@ -44,8 +45,6 @@ class Heart(pygame.sprite.Sprite):
         super().__init__(hearts_group)
         self.pos = pos
         self.mean = randint(1, 3)
-        # TODO: как-то визуально менять вид, исходя из значения
-        #  self.mean (self.mean - то на сколько хилит)
         self.update(get_offset())
 
     def update(self, offset=None, check_pickup=False):
@@ -56,7 +55,7 @@ class Heart(pygame.sprite.Sprite):
                 self.on_pickup()
                 return
         else:
-            self.image = pygame.transform.scale(icon, (size, size))
+            self.image = pygame.transform.scale(load_image(f'hearts\\heart{self.mean}.png'), (size, size))
             self.rect = self.image.get_rect().move(width // 2 - offset[0] +
                                                    self.pos[0] * size - size // 2,
                                                    height // 2 - offset[1] +
@@ -145,6 +144,7 @@ class Player(Character):
         self.moves_per_step = 1
         self.moves_last = self.moves_per_step
         self.kills = 0
+        self.count = 0
         self.items = []
         self.weapon_now = Weapon([[0, -1]], 5, "sword.png")
 
@@ -172,7 +172,7 @@ class Player(Character):
                                                   self.pos[1] + args[0][1]),
                                event=event, key=args[1]) and self.average_pos == [0, 0]:
                 self.animated_row.append([self.pos[0] + args[0][0], self.pos[1] + args[0][1]])
-                sound = pygame.mixer.Sound(choice(glob("data/sounds/player walk/*")))
+                sound = pygame.mixer.Sound("data/sounds/player walk/player walk1.wav")
                 sound.set_volume(volume)
                 sound.play()
                 self.moves_last -= 1
@@ -228,11 +228,13 @@ class BasicEnemy(Character):
             if self.rect.colliderect(rect):
                 self.hp -= player.damage + player.weapon_now.damage
                 # TODO: звук получения урона, здесь наверное, должен быть
+                # я думаю звука удара мобов достаточно
                 self.show_hp = True
                 if self.hp <= 0:
+                    player.kills += 1
+                    player.count += 100
                     self.kill()
-                    death = pygame.mixer.Sound(f'data\\sounds\\deaths'
-                                               f'\\{self.__class__.__name__.lower()}.ogg')
+                    death = pygame.mixer.Sound(f'data\\sounds\\deaths\\{self.__class__.__name__.lower()}.ogg')
                     death.set_volume(volume)
                     death.play()
                     if randint(0, 3) == 0:
@@ -320,7 +322,7 @@ class FastEnemy(BasicEnemy):
 class CubeEnemy(BasicEnemy):
     def __init__(self, *args):
         super().__init__(*args)
-
+    # они не атакуют персонажа
     def attack_player(self, need_pos):
         self.animated_row.append("attack")
 
@@ -358,7 +360,7 @@ class AnimatedAttack(pygame.sprite.Sprite):
             self.kill()
 
 
-items = [[0, "item1.png"], [1, "item2.png"], [2, "item3.png"]]
+items = [[0, "item1_test.png"], [1, "item2.png"], [2, "item3.png"]]
 weapons = [Weapon([[0, -1], [0, -2]], 10, "sword1.png")]
 
 
@@ -547,7 +549,7 @@ def make_surface_field():
 
 def end():
     pygame.quit()
-    exit()
+    sys.exit()
 
 
 def draw_main_game():
@@ -591,6 +593,7 @@ def draw_main_game():
             elif event.key == pygame.K_e:
                 if player.pos == exit_ladder and (usually_lvl or len(enemies) == 0):
                     player.floor += 1
+                    player.count += 1000
                     exit_sound = pygame.mixer.Sound('data\\sounds\\other\\exit_sound.ogg')
                     exit_sound.set_volume(volume)
                     exit_sound.play()
@@ -669,6 +672,7 @@ def draw_loading_bar(percent, width_lb=500, height_lb=50, text_under_lb=50):
     pygame.display.flip()
 
 
+# TODO: изменить интерфейс
 def draw_start_window(start_window_sizes=[800, 100],
                       exit_button_sizes=[200, 50], hardness_under=100):
     global state, player, drag, can_go_next, time_for_next, drag_offset, size, player_group, \
@@ -768,6 +772,30 @@ def draw_start_window(start_window_sizes=[800, 100],
         pygame.display.flip()
 
 
+def get_max_total(count):
+    try:
+        with open('data\\max_result.txt', mode='r') as check_res:
+            check = check_res.read().split()
+            record = int(check[0])
+            if count > record:
+                record = count
+            with open('data\\max_result.txt', mode='w') as replace_total:
+                replace_total.write(f'{record}\t{player.kills}\t{player.floor}')
+            return record
+
+    except FileNotFoundError:
+        with open('data\\max_result.txt', mode='w') as write_res:
+            write_res.write(f'{player.count}\t{player.kills}\t{player.floor}')
+        with open('data\\max_result.txt', mode='r') as check_res:
+            check = check_res.read().split()
+            record = int(check[0])
+            if count >= record:
+                record = count
+            with open('data\\max_result.txt', mode='w') as replace_total:
+                replace_total.write(f'{record}\t{player.kills}\t{player.floor}')
+            return record
+
+
 def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
                     text_under_end_window=20):
     global size, drag_offset, drag, focused, state, floor_field_sized, chest_looted, usually_lvl
@@ -817,6 +845,10 @@ def draw_end_window(end_window_sizes=[200, 400], exit_button_sizes=[200, 50],
     screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 10))
     text = pygame.font.Font(None, 30).render(f"kills - {player.kills}", True, (255, 255, 255))
     screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 30))
+    text = pygame.font.Font(None, 30).render(f'total - {player.count}', True, (255, 255, 255))
+    screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 50))
+    text = pygame.font.Font(None, 30).render(f'record - {get_max_total(player.count)}', True, (255, 255, 255))
+    screen.blit(text, (end_window_borders[0] + 10, end_window_borders[1] + 70))
 
     pygame.draw.rect(screen, (255, 255, 255), (end_window_borders[0] +
                                                end_window_borders[2] // 2 -
@@ -1012,8 +1044,7 @@ volume = 0.1
 pygame.mixer.music.load("data/sounds/other/test.mp3")
 pygame.mixer.music.set_volume(volume)
 pygame.mixer.music.play(-1)
-width, height = (1000, 1000) if input() == "" else (
-    pygame.display.Info().current_w, pygame.display.Info().current_h)
+width, height = pygame.display.Info().current_w, pygame.display.Info().current_h
 screen = pygame.display.set_mode((width, height))
 
 hardness = 1.0
@@ -1026,7 +1057,7 @@ attacks_group = pygame.sprite.Group()
 places = [load_new_place(f"places/place{i}.txt") for i in range(1, 6)]
 chest_im = load_image("chest.png")
 exit_ladder_im = load_image("exit_ladder.png")
-icon = load_image('heart.png')
+icon = load_image('hearts\\heart3.png')
 pygame.display.set_icon(icon)
 pygame.display.set_caption('roguelike dungeon')
 
